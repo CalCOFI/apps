@@ -10,7 +10,8 @@ librarian::shelf(
   leaflet, leaflet.extras, 
   oceanmetrics/leaftiles,
   # logger, loggit, 
-  lubridate, plotly, png, readr, shiny, shinydashboard, shinyjs, 
+  lubridate, plotly, png, readr, rnaturalearth, rnaturalearthhires, 
+  shiny, shinydashboard, shinyjs, 
   stringr, webshot2)
 # remotes::install_github("calcofi/calcofi4r", force=T)   # install remote
 # devtools::install_local(here::here("../calcofi4r"), force=T)  # install local

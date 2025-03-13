@@ -1,5 +1,5 @@
 librarian::shelf(
-  digest, dplyr, jsonlite, labeling, rpostgis, sf, terra, tidyr)
+  digest, dplyr, jsonlite, labeling, rnaturalearth, rnaturalearthhires, rpostgis, sf, terra, tidyr)
 
 get_aoi_sql <- function(
     aoi_keys = NULL,

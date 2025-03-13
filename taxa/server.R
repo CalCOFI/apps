@@ -312,6 +312,7 @@ function(input, output, session) {
     pal <- colorFactor("Dark2", sci_names) # RColorBrewer::display.brewer.all()
     # previewColors(colorFactor("Dark2", sci_names), sci_names)
     
+    # TODO: convert d_res to sf and zoom to extent
     leafletProxy("map") |> 
       clearShapes() |> 
       addCircleMarkers(
