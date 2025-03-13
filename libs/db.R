@@ -23,13 +23,22 @@ db_pass_txt <- ifelse(
 # sudo ln -s /share/.calcofi_db_pass.txt /root/.calcofi_db_pass.txt
 stopifnot(file.exists(db_pass_txt))
 
-con <- DBI::dbConnect(
-  RPostgres::Postgres(),
-  dbname   = "gis",
-  host     = host, 
-  port     = 5432,
-  user     = "admin",
-  password = readLines(db_pass_txt))
+
+get_con <- function(schemas = "public"){
+
+  con <- DBI::dbConnect(
+    RPostgres::Postgres(),
+    dbname   = "gis",
+    host     = host, 
+    port     = 5432,
+    user     = "admin",
+    password = readLines(db_pass_txt),
+    options  = glue("-c search_path={paste(schemas, collapse = ',')}"))
+}
+  
+con          <- get_con()
+con_dev      <- get_con(c("dev","public"))
+con_dev_only <- get_con("dev")
 
 # test connection ----
 # dbListTables(con)
