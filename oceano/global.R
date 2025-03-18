@@ -42,8 +42,9 @@ rng_depths <- dbGetQuery(
   con, "SELECT MAX(depth_m) max FROM ctd_bottles")
 
 # data table of variables
-d_vars  <- tbl(con, "field_labels") |> 
-  filter(active) |> 
+d_vars  <- tbl(con, "field_labels") |>
+  # dbExecute(con, "UPDATE field_labels SET active = FALSE WHERE plot_title = 'Dissolved Inorganic Carbon'")
+  filter(active) |>   
   arrange(plot_title) |> 
   collect()
 
