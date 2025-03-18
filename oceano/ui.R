@@ -43,7 +43,7 @@ ui <- function(request) {
       "Date range",
       min   = rng_dates$min,
       max   = rng_dates$max,
-      start = as.Date(rng_dates$max - dyears(5)),
+      start = rng_dates$min,  # as.Date(rng_dates$max - dyears(5)),
       end   = rng_dates$max,
       startview = "year"),
     

@@ -162,7 +162,8 @@ get_points <- function(
       {q_tbl_geom} AS geom
     FROM {q_from}
       JOIN aoi ON ST_Covers(aoi.geom, {q_tbl_geom})
-    WHERE 
+    WHERE
+      {v$fld} IS NOT NULL AND
       ({v$tbl}.depth_m BETWEEN {depth_m_min} AND {depth_m_max}) AND
       (date BETWEEN '{date_beg}' AND '{date_end}') AND
       DATE_PART('quarter', date) IN ({paste(date_qrtr, collapse=',')})
@@ -330,11 +331,15 @@ get_map_data <- function(
   idw_geo <- glue("{dir_cache}/idw_{hash}.geojson")
   idw_tif <- glue("{dir_cache}/idw_{hash}.tif")
   
-  # * check if hash exists in idw table ----
+  # * check if hash exists in idw table and on file system ----
   has_idw <- tbl(con, "idw_stats") |> 
     filter(hash == !!hash) |> 
     collect() |> 
     nrow() == 1
+  if (!file.exists(idw_tif) & has_idw){
+    dbExecute(con, glue("DELETE FROM idw_stats WHERE hash = '{hash}'"))
+    has_idw = F
+  }
   
   # log_info(
   #   list(get_map_data = list(
@@ -385,6 +390,7 @@ get_map_data <- function(
     return(o)
   }
   
+  
   # * otherwise has_idw = F, continue to get points ----
   pts <- get_points(
     variable    = variable, 
@@ -408,7 +414,7 @@ get_map_data <- function(
   # interpolate points to raster using IDW
   aoi <- get_aoi(aoi_ewkt = aoi_ewkt, aoi_keys = aoi_keys)
   r_idw <- pts_to_rast_idw(pts, value, aoi, out_tif = idw_tif)
-  # mapview::mapView(r_idw) # mapview::mapView(aoi)
+  # mapview::mapView(r_idw) + mapview::mapView(aoi)
   
   # generate contour polygons from raster
   plys <- rast_to_contours(r_idw, aoi, n_brks = n_bins + 1)
