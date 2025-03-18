@@ -533,13 +533,21 @@ shinyServer(function(input, output, session) {
     d$lwr <- d$avg - d$sd
     d$upr <- d$avg + d$sd
     
-    d %>% 
+    p <- d %>% 
       select(time, avg, lwr, upr) %>% 
       dygraph(main = v$plot_title) %>%
       dySeries(
         c("lwr", "avg", "upr"), 
         label = v$plot_label, color = v$plot_color) # %>%
     # dyOptions(drawGrid = input$showgrid)
+    
+    if (input$sel_time_step == "year") 
+      p <- p |> 
+        dyAxis(
+          name="x",
+          axisLabelFormatter = "function(x){ return parseInt(x) }")
+  
+    p
   })
   
   # * dl_ts_csv: download timeseries csv ----
