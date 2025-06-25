@@ -38,7 +38,7 @@ get_con <- function(schemas = "public"){
   
 con          <- get_con()
 con_dev      <- get_con(c("dev","public"))
-con_dev_only <- get_con("dev")
+con_dev_only <- get_con(c("dev","dev_ref"))
 
 # helper functions ----
 glue2 <- function(x, null_str="", .envir = sys.frame(-3), ...){
