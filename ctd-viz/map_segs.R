@@ -8,7 +8,8 @@ librarian::shelf(
   mapview,
   purrr,
   sf,
-  viridis
+  viridis,
+  quiet = T
 )
 
 dir_db <- switch(
@@ -132,30 +133,33 @@ cruises_valid <- d_cruise_bb |>
     xmax < -100
   ) |>
   pull(cruise_id)
+length(cruises_valid) # 80
 
 cruises_invalid <- setdiff(d_cruise_bb$cruise_id, cruises_valid)
 d_cruise_bb |>
   filter(cruise_id %in% cruises_invalid)
-   cruise_id  xmin  ymin  xmax  ymax
-   <chr>     <dbl> <dbl> <dbl> <dbl>
- 1 0310NH    -172.  29.8 172.   35.1
- 2 0501NH    -124.   0     0    35.1
- 3 0504NH    -124.   0     0    35.1
- 4 0511NH    -124.  29.8 -99    35.1
- 5 0701JD    -125.   0     0    36.8
- 6 0707NH    -124.   0     0    35.1
- 7 0711NH    -170.  29.8 175.   35.0
- 8 0801JD    -180. -89.5 179.   89.9
- 9 1307NH    -124.   0     0    35.1
-10 1311NH    -124.   0     0    35.1
-11 1402SH    -124.   0     0    34.0
-12 1507OC    -125.  29.8  12.5  35.1
-13 2404SH    -177. -87.9 180.   89.0
+#    cruise_id  xmin  ymin  xmax  ymax
+#    <chr>     <dbl> <dbl> <dbl> <dbl>
+#  4 0511NH    -124.  29.8 -99    35.1
+# 12 1507OC    -125.  29.8  12.5  35.1
+#  1 0310NH    -172.  29.8 172.   35.1
+#  7 0711NH    -170.  29.8 175.   35.0
+#  8 0801JD    -180. -89.5 179.   89.9
+# 13 2404SH    -177. -87.9 180.   89.0
+# FIXED:
+#  2 0501NH    -124.   0     0    35.1
+#  3 0504NH    -124.   0     0    35.1
+#  5 0701JD    -125.   0     0    36.8
+#  6 0707NH    -124.   0     0    35.1
+#  9 1307NH    -124.   0     0    35.1
+# 10 1311NH    -124.   0     0    35.1
+# 11 1402SH    -124.   0     0    34.0
 
-# vs 80 valid
+tbl(con, "ctd") |>
+  filter(cruise_id == "0501NH") |>
 
-# Create labels for popup and hover
-sf_segs_filt <- sf_segs |>
+  # Create labels for popup and hover
+  sf_segs_filt <- sf_segs |>
   # filter(cruise_id == "0302JD") |>
   filter(cruise_id %in% cruises_valid) |>
   mutate(
