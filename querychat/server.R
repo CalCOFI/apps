@@ -257,16 +257,9 @@ function(input, output, session) {
 
   # schema tab ----
 
-  # render mermaid ERD when schema tab is shown
-  observe({
-    # trigger when app starts or tab changes
-    input$nav
-
-    # send mermaid code to be rendered via javascript
-    session$sendCustomMessage("renderMermaid", list(
-      id   = "mermaid-erd-container",
-      code = get_erd_mermaid()
-    ))
+  # render mermaid ERD from file
+  output$erd_diagram <- DiagrammeR::renderDiagrammeR({
+    DiagrammeR::mermaid(readLines(here::here("querychat/schema.mmd")) |> paste(collapse = "\n"))
   })
 
   # tables list

@@ -1,0 +1,54 @@
+erDiagram
+    SHIP ||--o{ CRUISE : has
+    CRUISE ||--o{ SITE : contains
+    SITE ||--o{ TOW : has
+    TOW }o--|| TOW_TYPE : type
+    TOW ||--o{ NET : uses
+    NET ||--o{ EGG : samples
+    NET ||--o{ LARVA : samples
+    EGG }o--|| SPECIES : identifies
+    LARVA }o--|| SPECIES : identifies
+    SITE }o--o| GRID : within
+
+    SHIP {
+        varchar ship_key PK
+        varchar ship_name
+    }
+    CRUISE {
+        uuid cruise_uuid PK
+        date date_ym
+        varchar ship_key FK
+    }
+    SITE {
+        uuid site_uuid PK
+        uuid cruise_uuid FK
+        decimal latitude
+        decimal longitude
+    }
+    TOW {
+        uuid tow_uuid PK
+        uuid site_uuid FK
+        varchar tow_type_key FK
+    }
+    NET {
+        uuid net_uuid PK
+        uuid tow_uuid FK
+    }
+    EGG {
+        uuid net_uuid FK
+        smallint species_id FK
+        integer tally
+    }
+    LARVA {
+        uuid net_uuid FK
+        smallint species_id FK
+        integer tally
+    }
+    SPECIES {
+        smallint species_id PK
+        varchar scientific_name
+        varchar common_name
+    }
+    GRID {
+        text grid_key PK
+    }

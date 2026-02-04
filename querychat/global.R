@@ -6,11 +6,30 @@ if (!require("librarian")){
   library(librarian)
 }
 librarian::shelf(
-  bslib, bsicons, DBI, dbplyr, digest, dplyr, DT, duckdb, ggplot2, glue,
-  htmltools, leaflet, leaflet.extras, plotly, querychat, readr, shiny,
-  shinyjs, stringr, tidyr,
+  bslib, bsicons, DBI, dbplyr, DiagrammeR, digest, dplyr, DT, duckdb,
+  ggplot2, glue, htmltools, leaflet, leaflet.extras, plotly, querychat,
+  readr, shiny, shinyjs, stringr, tidyr,
   quiet = T)
 options(readr.show_col_types = F)
+
+# https://github.com/rich-iannone/DiagrammeR/issues/475#issue-1412818156
+# update mermaid.js in DiagrammeR package (only once, not on every run)
+mermaid_path <- system.file(
+  "htmlwidgets/lib/mermaid/dist/mermaid.slim.min.js",
+  package = "DiagrammeR")
+mermaid_version <- "11.4.1"
+mermaid_marker <- file.path(dirname(mermaid_path), paste0(".mermaid_", mermaid_version))
+
+if (!file.exists(mermaid_marker)) {
+  url <- glue("https://cdn.jsdelivr.net/npm/mermaid@{mermaid_version}/dist/mermaid.min.js")
+  tryCatch({
+    download.file(url, mermaid_path, quiet = TRUE)
+    file.create(mermaid_marker)
+    message("Updated mermaid.js to version ", mermaid_version)
+  }, error = function(e) {
+    message("Failed to update mermaid.js: ", e$message)
+  })
+}
 
 # database connection ----
 # connect to remote DuckDB database via httpfs
@@ -227,63 +246,6 @@ dbExecute(con, '
   ) e ON sp.species_id = e.species_id
 ')
 
-# helper functions ----
-get_erd_mermaid <- function() {
-"erDiagram
-    SHIP ||--o{ CRUISE : has
-    CRUISE ||--o{ SITE : contains
-    SITE ||--o{ TOW : has
-    TOW }o--|| TOW_TYPE : type
-    TOW ||--o{ NET : uses
-    NET ||--o{ EGG : samples
-    NET ||--o{ LARVA : samples
-    EGG }o--|| SPECIES : identifies
-    LARVA }o--|| SPECIES : identifies
-    SITE }o--o| GRID : within
-
-    SHIP {
-        varchar ship_key PK
-        varchar ship_name
-    }
-    CRUISE {
-        uuid cruise_uuid PK
-        date date_ym
-        varchar ship_key FK
-    }
-    SITE {
-        uuid site_uuid PK
-        uuid cruise_uuid FK
-        decimal latitude
-        decimal longitude
-    }
-    TOW {
-        uuid tow_uuid PK
-        uuid site_uuid FK
-        varchar tow_type_key FK
-    }
-    NET {
-        uuid net_uuid PK
-        uuid tow_uuid FK
-    }
-    EGG {
-        uuid net_uuid FK
-        smallint species_id FK
-        integer tally
-    }
-    LARVA {
-        uuid net_uuid FK
-        smallint species_id FK
-        integer tally
-    }
-    SPECIES {
-        smallint species_id PK
-        varchar scientific_name
-        varchar common_name
-    }
-    GRID {
-        text grid_key PK
-    }"
-}
 
 # sample questions for the chat interface ----
 sample_questions <- c(

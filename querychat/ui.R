@@ -7,26 +7,8 @@ tagList(
   shinyjs::useShinyjs(),
   tags$head(
     tags$link(rel = "stylesheet", type = "text/css", href = "styles.css"),
-    # load mermaid.js
-    tags$script(src = "https://cdn.jsdelivr.net/npm/mermaid@10/dist/mermaid.min.js"),
+    # handler to populate and submit chat input
     tags$script(HTML("
-      // initialize mermaid
-      mermaid.initialize({
-        startOnLoad: false,
-        theme: 'default',
-        securityLevel: 'loose'
-      });
-
-      // custom handler to render mermaid diagrams
-      Shiny.addCustomMessageHandler('renderMermaid', function(message) {
-        var container = document.getElementById(message.id);
-        if (container) {
-          container.innerHTML = '<pre class=\"mermaid\">' + message.code + '</pre>';
-          mermaid.run({ nodes: container.querySelectorAll('.mermaid') });
-        }
-      });
-
-      // handler to populate and submit chat input
       Shiny.addCustomMessageHandler('submitChatQuestion', function(question) {
         var chatInput = document.querySelector('textarea[id*=\"user_input\"]') ||
                         document.querySelector('.chat-input textarea') ||
@@ -35,18 +17,12 @@ tagList(
           chatInput.value = question;
           chatInput.dispatchEvent(new Event('input', { bubbles: true }));
           chatInput.dispatchEvent(new Event('change', { bubbles: true }));
-
           setTimeout(function() {
             var submitBtn = document.querySelector('button[type=\"submit\"]') ||
                             document.querySelector('.chat-input button') ||
                             document.querySelector('button.btn-primary');
             if (submitBtn) {
               submitBtn.click();
-            } else {
-              var enterEvent = new KeyboardEvent('keydown', {
-                key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true
-              });
-              chatInput.dispatchEvent(enterEvent);
             }
           }, 150);
         }
@@ -172,7 +148,7 @@ page_navbar(
         card_body(
           class = "erd-container",
           style = "min-height: 500px; overflow: auto;",
-          div(id = "mermaid-erd-container"))
+          DiagrammeR::DiagrammeROutput("erd_diagram", height = "500px"))
       ),
 
       # table list
