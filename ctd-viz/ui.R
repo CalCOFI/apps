@@ -77,5 +77,5 @@ ui <- page_sidebar(
 
     nav_panel(
       "Transect",
-      plotlyOutput("plot_transect", height = "100%")))
+      plotOutput("plot_transect", height = "100%")))
 )

@@ -2,15 +2,41 @@
 librarian::shelf(
   bslib, bsicons, calcofi/calcofi4r,
   DBI, dbplyr, dplyr, duckdb,
-  geosphere, ggplot2, glue, htmltools,
-  lubridate, mapgl, marmap, MBA,
-  plotly, purrr, sf, shiny, stringr,
+  geosphere, ggExtra, ggplot2, glue, htmltools,
+  lubridate, mapgl, MBA,
+  purrr, sf, shiny, stringr, terra,
   tidyr, viridis,
   quiet = T)
 
+# paths ----
+app_dir <- dirname(normalizePath(
+  sys.frame(1)$ofile %||% "global.R", mustWork = FALSE))
+if (!dir.exists(app_dir)) app_dir <- getwd()
+
+db_file <- if (dir.exists("/share/data")) {
+  "/share/data/ctd-viz/ctd-viz.duckdb"
+} else {
+  path.expand("~/_big/calcofi.org/ctd-viz/ctd-viz.duckdb")
+}
+stopifnot(
+  "prepped database not found; run `Rscript prep_db.R` first" =
+    file.exists(db_file))
+
+bathy_tif <- file.path(app_dir, "data/gebco_calcofi.tif")
+stopifnot(
+  "bathymetry raster not found; run `Rscript prep_bathy.R` first" =
+    file.exists(bathy_tif))
+
 # database ----
-# cc_get_db() handles httpfs setup and partitioned parquet (ctd_measurement, etc.)
-con <- calcofi4r::cc_get_db()
+con <- dbConnect(
+  duckdb::duckdb(
+    dbdir     = db_file,
+    read_only = TRUE,
+    config    = list(autoload_known_extensions = "true")))
+dbExecute(con, "INSTALL spatial; LOAD spatial;")
+
+# bathymetry (loaded once at app start) ----
+bathy_rast <- terra::rast(bathy_tif)
 
 # cruise choices ----
 # derive date from ctd_cast.datetime_utc (cruise table is stale for newer cruises)
@@ -75,41 +101,37 @@ compute_segments <- function(casts_df) {
       length_km = as.numeric(st_length(geom)) / 1000)
 }
 
-# fetch bathymetry along a transect path
-get_transect_bathy <- function(lons, lats, n_pts = 100) {
-  lon_rng <- range(lons) + c(-0.5, 0.5)
-  lat_rng <- range(lats) + c(-0.5, 0.5)
+# extract bathymetry at each cast position (not interpolated between).
+# a CalCOFI cruise zigzags across the grid; interpolating lon/lat between
+# consecutive casts often crosses land (e.g. Channel Islands), producing
+# nonsense "bathymetry" along the transect. using cast locations only keeps
+# depth firmly in-water.
+get_transect_bathy <- function(lons, lats, dists_km) {
+  stopifnot(
+    length(lons) == length(lats),
+    length(lons) == length(dists_km))
+  if (length(lons) < 2) return(NULL)
 
-  bathy <- tryCatch(
-    marmap::getNOAA.bathy(
-      lon1 = lon_rng[1], lon2 = lon_rng[2],
-      lat1 = lat_rng[1], lat2 = lat_rng[2],
-      resolution = 1, keep = TRUE),
-    error = function(e) {
-      message("Bathymetry fetch failed: ", e$message)
-      NULL
-    })
-
-  if (is.null(bathy)) return(NULL)
-
-  pts_lon <- approx(seq_along(lons), lons, n = n_pts)$y
-  pts_lat <- approx(seq_along(lats), lats, n = n_pts)$y
-  depths  <- marmap::get.depth(bathy, x = pts_lon, y = pts_lat, locator = FALSE)
-
-  dist_km <- c(0, cumsum(
-    geosphere::distHaversine(
-      cbind(pts_lon[-n_pts], pts_lat[-n_pts]),
-      cbind(pts_lon[-1],     pts_lat[-1])) / 1000))
+  # local gebco_calcofi.tif uses positive-down convention (ocean depth > 0,
+  # land near 0). clamp land/negatives to 0 so the polygon stays at the surface
+  # over dry points (CalCOFI casts shouldn't be on land, but be defensive).
+  depths <- terra::extract(
+    bathy_rast,
+    cbind(lons, lats),
+    method = "bilinear")[, 1]
 
   tibble(
-    dist_km       = dist_km,
-    bathy_depth_m = -depths$depth)
+    dist_km       = dists_km,
+    bathy_depth_m = pmax(depths, 0))
 }
 
-# build ODV-style transect plot with MBA interpolation
+# build ODV-style transect plot with MBA interpolation, sampling dots,
+# and marginal density histograms. Returns a patchwork object.
 build_transect_plot <- function(meas_data, bathy_data = NULL,
                                 meas_label, max_depth = 500,
-                                interp_n = 100) {
+                                interp_n = 100,
+                                cruise_key = NULL,
+                                cast_info = NULL) {
   xyz <- meas_data |>
     filter(!is.na(measurement_value)) |>
     select(x = dist_km, y = depth_m, z = measurement_value) |>
@@ -117,27 +139,37 @@ build_transect_plot <- function(meas_data, bathy_data = NULL,
 
   if (nrow(xyz) < 4) return(NULL)
 
-  surf   <- MBA::mba.surf(xyz, no.X = interp_n, no.Y = interp_n,
-                           extend = TRUE)$xyz.est
+  # MBA interpolation (ODV-style smooth field)
+  surf <- MBA::mba.surf(
+    xyz, no.X = interp_n, no.Y = interp_n, extend = TRUE)$xyz.est
   d_grid <- expand.grid(dist_km = surf$x, depth_m = surf$y) |>
     mutate(value = as.vector(surf$z)) |>
     filter(depth_m >= 0, depth_m <= max_depth)
 
-  station_pos <- meas_data |> distinct(dist_km)
+  x_rng <- range(xyz$x)
+  y_rng <- c(0, max_depth)
 
-  p <- ggplot() +
+  # main section plot ----
+  p_main <- ggplot() +
     geom_raster(
-      data = d_grid,
+      data        = d_grid,
       aes(dist_km, depth_m, fill = value),
       interpolate = TRUE) +
     scale_fill_viridis_c(name = meas_label) +
     geom_contour(
-      data = d_grid,
+      data      = d_grid,
       aes(dist_km, depth_m, z = value),
-      color = "white", alpha = 0.4, linewidth = 0.3) +
-    geom_rug(
-      data = station_pos,
-      aes(x = dist_km), sides = "t")
+      color     = "white",
+      alpha     = 0.4,
+      linewidth = 0.3) +
+    # sampling dots: show where measurements actually occurred
+    geom_point(
+      data   = xyz,
+      aes(x, y),
+      colour = "black",
+      alpha  = 0.15,
+      size   = 0.25,
+      stroke = 0)
 
   if (!is.null(bathy_data)) {
     bathy_poly <- bind_rows(
@@ -146,18 +178,59 @@ build_transect_plot <- function(meas_data, bathy_data = NULL,
         dist_km       = c(max(bathy_data$dist_km), min(bathy_data$dist_km)),
         bathy_depth_m = c(max_depth, max_depth)))
 
-    p <- p + geom_polygon(
-      data = bathy_poly,
-      aes(dist_km, bathy_depth_m),
-      fill = "gray40", color = "black", linewidth = 0.5)
+    p_main <- p_main +
+      geom_polygon(
+        data      = bathy_poly,
+        aes(dist_km, bathy_depth_m),
+        fill      = "grey70",
+        colour    = "black",
+        linewidth = 0.4)
   }
 
-  p +
-    scale_y_reverse(limits = c(max_depth, 0), expand = c(0, 0)) +
-    scale_x_continuous(expand = c(0, 0)) +
-    labs(x = "Distance (km)", y = "Depth (m)") +
-    theme_minimal() +
-    theme(panel.grid = element_blank())
+  title_lab <- if (!is.null(cruise_key)) {
+    glue("{meas_label} \u2014 Cruise {cruise_key}")
+  } else meas_label
+
+  # build a date axis on top if cast_info provided (~6 evenly spaced labels)
+  sec_x <- ggplot2::waiver()
+  if (!is.null(cast_info) && nrow(cast_info) >= 2) {
+    n_breaks <- min(6, nrow(cast_info))
+    br_idx   <- round(seq(1, nrow(cast_info), length.out = n_breaks))
+    sec_x    <- ggplot2::dup_axis(
+      breaks = cast_info$dist_km[br_idx],
+      labels = format(cast_info$datetime_utc[br_idx], "%m-%d"),
+      name   = NULL)
+  }
+
+  p_main <- p_main +
+    scale_y_reverse(limits = rev(y_rng), expand = c(0, 0)) +
+    scale_x_continuous(
+      limits   = x_rng,
+      expand   = c(0, 0),
+      sec.axis = sec_x) +
+    guides(fill = guide_colourbar(
+      barwidth = unit(8, "cm"), barheight = unit(0.3, "cm"))) +
+    labs(x = "Distance (km)", y = "Depth (m)", title = title_lab) +
+    theme_minimal(base_size = 11) +
+    theme(
+      panel.grid         = element_blank(),
+      legend.position    = "bottom",
+      legend.title       = element_text(size = 9),
+      legend.text        = element_text(size = 8),
+      legend.margin      = margin(0, 0, 0, 0),
+      legend.box.margin  = margin(-2, 0, 0, 0))
+
+  # marginal histograms via ggExtra::ggMarginal — purpose-built to produce a
+  # narrow (~5%) strip along x and y without stealing panel width. requires
+  # a point geom inside the main plot, which we already have via geom_point.
+  # `size = 20` means "main plot is 20× the marginal strip" (i.e. ~5% strip).
+  ggMarginal(
+    p_main,
+    type   = "histogram",
+    margins = "both",
+    size   = 20,
+    xparams = list(bins = 60, fill = "grey30", colour = NA),
+    yparams = list(bins = 60, fill = "grey30", colour = NA))
 }
 
 # cleanup ----

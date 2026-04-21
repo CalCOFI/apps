@@ -320,21 +320,29 @@ server <- function(input, output, session) {
       meas_info  <- meas_types |> filter(measurement_type == meas_type_sel)
       meas_label <- paste0(meas_info$description, " (", meas_info$units, ")")
 
-      # bathymetry (optional)
+      # bathymetry (optional): sampled at each cast, not interpolated between
       bathy_data <- NULL
       if (input$chk_bathy) {
         setProgress(0.6, detail = "Fetching bathymetry...")
-        bathy_data <- get_transect_bathy(transect$lon_dec, transect$lat_dec)
+        bathy_data <- get_transect_bathy(
+          transect$lon_dec, transect$lat_dec, dists)
       }
 
       setProgress(0.8, detail = "Building plot...")
+
+      # cast-level (dist, datetime) for date axis
+      cast_info <- tibble(
+        dist_km      = dists,
+        datetime_utc = transect$datetime_utc)
 
       p <- build_transect_plot(
         meas_data  = d_meas,
         bathy_data = bathy_data,
         meas_label = meas_label,
         max_depth  = input$sl_max_depth,
-        interp_n   = input$num_interp_n)
+        interp_n   = input$num_interp_n,
+        cruise_key = rv$cruise_key,
+        cast_info  = cast_info)
 
       if (is.null(p)) {
         showNotification(
@@ -342,11 +350,7 @@ server <- function(input, output, session) {
         return()
       }
 
-      # add title and convert to plotly
-      p <- p + labs(title = glue("{meas_label} \u2014 Cruise {rv$cruise_key}"))
-
-      rv$transect_plot <- ggplotly(p) |>
-        config(displaylogo = FALSE)
+      rv$transect_plot <- p
     })
 
     # switch to transect tab
@@ -354,7 +358,7 @@ server <- function(input, output, session) {
   })
 
   # render transect ----
-  output$plot_transect <- renderPlotly({
+  output$plot_transect <- renderPlot({
     req(rv$transect_plot)
     rv$transect_plot
   })
