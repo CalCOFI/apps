@@ -24,6 +24,8 @@ page_fillable(
 
   # tags$head(tags$link(rel="stylesheet", type="text/css", href="styles.css")),
 
+  tags$head(includeHTML("google-analytics.html")),
+
   navset_card_pill(
     placement = "above",
     
