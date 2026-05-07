@@ -29,6 +29,7 @@ dashboardPage(
         menuSubItem("Biodiversity",   tabName = "tab_ei_bio")))), 
   
   dashboardBody(
+    tags$head(includeHTML("google-analytics.html")),
     tabItems(
       
       # tab_over ----

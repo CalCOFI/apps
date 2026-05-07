@@ -64,6 +64,7 @@ ui <- function(request) {
   dashboardBody(
     shinyjs::useShinyjs(),
     tags$head(tags$link(rel="stylesheet", type="text/css", href="styles.css")),
+    tags$head(includeHTML("google-analytics.html")),
     tabsetPanel(
       id = "tabs",
       tabPanel(

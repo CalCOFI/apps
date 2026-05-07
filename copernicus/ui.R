@@ -14,9 +14,11 @@ page_sidebar(
   sidebar = sidebar(
     selectInput(
       "sel_var", "Variable",
-      choices  = vars, 
+      choices  = vars,
       selected = var_default) ),
-  
+
+  tags$head(includeHTML("google-analytics.html")),
+
     leafletOutput("map"),
   
     # chooseSliderSkin("Square"), # "Shiny", "Flat", "Big", "Modern", "Sharp", "Round", "Square"
