@@ -49,11 +49,11 @@ crop_bathy <- function(db, gebco_src, out_tif) {
         "\n  ", gebco_src, "\n", sep = "")
     return(invisible())
   }
-  terra::terraOptions(threads = 1)
+  terra::terraOptions(threads = 2)
   
   con_b <- dbConnect(duckdb::duckdb(dbdir = db, read_only = TRUE))
   # Limit DuckDB threads so it doesn't starve the Shiny server
-  dbExecute(con_b, "SET threads TO 1")
+  dbExecute(con_b, "SET threads TO 2")
   e <- dbGetQuery(con_b, "
     SELECT MIN(lon_dec) AS lon_min, MAX(lon_dec) AS lon_max,
            MIN(lat_dec) AS lat_min, MAX(lat_dec) AS lat_max
@@ -157,7 +157,7 @@ con <- cc_get_db(
   refresh    = force_pull)
 is_server <- Sys.info()[["sysname"]] == "Linux"
 # Limit DuckDB threads so it doesn't starve the Shiny server
-if (is_server) res <- dbExecute(con, "SET threads TO 1")
+if (is_server) res <- dbExecute(con, "SET threads TO 2")
 
 # materialize partitioned views → native local tables ----
 # cc_get_db leaves partitioned tables (ctd_thin, ctd_summary) as remote S3
