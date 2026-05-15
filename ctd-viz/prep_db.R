@@ -50,6 +50,8 @@ crop_bathy <- function(db, gebco_src, out_tif) {
     return(invisible())
   }
   con_b <- dbConnect(duckdb::duckdb(dbdir = db, read_only = TRUE))
+  # Limit DuckDB to 2 threads so it doesn't starve the Shiny server
+  dbExecute(con, "SET threads TO 2")
   e <- dbGetQuery(con_b, "
     SELECT MIN(lon_dec) AS lon_min, MAX(lon_dec) AS lon_max,
            MIN(lat_dec) AS lat_min, MAX(lat_dec) AS lat_max
