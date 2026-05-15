@@ -153,9 +153,9 @@ con <- cc_get_db(
   cache_dir  = stage_dir,
   tables     = avail,
   refresh    = force_pull)
-is_server <- if (Sys.info()[["sysname"]] == "Linux")
+is_server <- Sys.info()[["sysname"]] == "Linux"
 # Limit DuckDB threads so it doesn't starve the Shiny server
-if (is_server) dbExecute(con, "SET threads TO 1")
+if (is_server) res <- dbExecute(con, "SET threads TO 1")
 
 # materialize partitioned views → native local tables ----
 # cc_get_db leaves partitioned tables (ctd_thin, ctd_summary) as remote S3
