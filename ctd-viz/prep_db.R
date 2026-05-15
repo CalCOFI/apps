@@ -1,17 +1,26 @@
-# prep_db.R - build optimized local database for ctd-viz app
+# prep_db.R - build optimized local database + bathymetry for ctd-viz app
 #
 # usage:
-#   Rscript prep_db.R              # uses latest release
-#   Rscript prep_db.R v2026.04.08  # uses specific version
-#   Rscript prep_db.R latest TRUE  # force re-download
+#   Rscript prep_db.R                # uses latest release
+#   Rscript prep_db.R v2026.05.14    # uses a specific version
+#   Rscript prep_db.R latest TRUE    # force re-download
 #
-# idempotent: skips rebuild when target file exists unless forced.
-# WARNING: downloads and materializes ctd_measurement locally (~15-20 GB).
+# idempotent: skips a build when its target file already exists unless forced;
+# the database and the bathymetry raster are tracked independently.
+# downloads + materializes ctd_thin (~260 MB), ctd_summary (~5 GB), ctd_cast,
+# measurement_type, ship. the full ctd_measurement table is a *supplemental*
+# release output (not in the catalog) and is intentionally NOT materialized —
+# the app runs on the adaptively-thinned ctd_thin.
+#
+# also crops GEBCO 2025 sub-ice bathymetry to the ctd_cast extent (+ margin) ->
+# data/gebco_calcofi.tif (positive-down depth, m; land clamped to 0). this is
+# an app-side stopgap — bathymetry should become a first-class released
+# layer: see CalCOFI/workflows#54.
 
 # run from app dir: `cd apps/ctd-viz && Rscript prep_db.R`
 devtools::load_all("../../calcofi4r")
 librarian::shelf(
-  DBI, duckdb, fs, glue,
+  DBI, duckdb, fs, glue, terra,
   quiet = TRUE)
 
 # locate this script's directory
@@ -26,6 +35,38 @@ args       <- commandArgs(trailingOnly = TRUE)
 db_version <- if (length(args) >= 1) args[1] else "latest"
 force_pull <- if (length(args) >= 2) as.logical(args[2]) else FALSE
 
+# crop GEBCO 2025 sub-ice bathymetry to the ctd_cast extent (+ margin) in
+# `db`, negate elevation -> positive-down depth (m), clamp land to 0, write
+# `out_tif`. needs the db on hand so the AOI always covers every cruise — a
+# previous fixed AOI silently clipped cruises that ran past Pt. Conception.
+crop_bathy <- function(db, gebco_src, out_tif) {
+  if (!file.exists(gebco_src)) {
+    cat("WARNING: GEBCO 2025 source not found — keeping existing bathymetry",
+        "\n  ", gebco_src, "\n", sep = "")
+    return(invisible())
+  }
+  con_b <- dbConnect(duckdb::duckdb(dbdir = db, read_only = TRUE))
+  e <- dbGetQuery(con_b, "
+    SELECT MIN(lon_dec) AS lon_min, MAX(lon_dec) AS lon_max,
+           MIN(lat_dec) AS lat_min, MAX(lat_dec) AS lat_max
+    FROM ctd_cast WHERE lon_dec IS NOT NULL AND lat_dec IS NOT NULL")
+  dbDisconnect(con_b, shutdown = TRUE)
+  m   <- 0.5   # degree margin around the cast extent
+  aoi <- ext(e$lon_min - m, e$lon_max + m, e$lat_min - m, e$lat_max + m)
+  cat("cropping GEBCO 2025 sub-ice bathymetry to cast extent [",
+      paste(round(as.vector(aoi), 2), collapse = ", "), "] ...\n", sep = "")
+  depth <- clamp(-crop(rast(gebco_src), aoi), lower = 0, values = TRUE)
+  names(depth) <- "depth_m"
+  dir_create(path_dir(out_tif))
+  writeRaster(
+    depth, out_tif, overwrite = TRUE,
+    gdal = c("COMPRESS=DEFLATE", "PREDICTOR=2", "TILED=YES"))
+  cat("  wrote", out_tif,
+      glue("({round(file.info(out_tif)$size / 1024^2, 1)} MB, ",
+           "{ncol(depth)} x {nrow(depth)} cells, ",
+           "{round(minmax(depth)[2, 1])} m max depth)"), "\n")
+}
+
 # target location ----
 db_file <- if (dir.exists("/share/data")) {
   "/share/data/ctd-viz/ctd-viz.duckdb"
@@ -34,22 +75,43 @@ db_file <- if (dir.exists("/share/data")) {
 }
 dir_create(path_dir(db_file))
 
-# idempotency check
-if (file.exists(db_file) && !force_pull) {
-  cat("database already exists, skipping rebuild:\n  ", db_file, "\n",
+# bathymetry source + output (cropped after the db is on hand — see
+# crop_bathy, which sizes the AOI to the ctd_cast extent). TODO: move
+# bathymetry into the released database — CalCOFI/workflows#54.
+gebco_src <- path.expand(paste0(
+  "~/_big/gebco_2025_sub_ice_topo_geotiff/",
+  "gebco_2025_sub_ice_n90.0_s0.0_w-180.0_e-90.0.tif"))
+bathy_tif <- file.path(app_dir, "data", "gebco_calcofi.tif")
+
+# idempotency — the db and the bathymetry raster are tracked independently
+db_needed    <- !file.exists(db_file)   || force_pull
+bathy_needed <- !file.exists(bathy_tif) || force_pull
+
+if (!db_needed && !bathy_needed) {
+  cat("database + bathymetry already exist, skipping rebuild:\n  ",
+      db_file, "\n  ", bathy_tif, "\n",
       "pass 'latest TRUE' as args to force rebuild.\n", sep = "")
   quit(status = 0)
 }
 
-# tables to include (CTD subset + reference) ----
-# per app usage: ctd_cast, ctd_measurement, measurement_type, ship.
-# ctd_summary included for future use (station/depth aggregates).
+# bathy-only path: the db is current, just (re)crop bathymetry from it
+if (!db_needed && bathy_needed) {
+  cat("database already exists, skipping rebuild:\n  ", db_file, "\n", sep = "")
+  crop_bathy(db_file, gebco_src, bathy_tif)
+  quit(status = 0)
+}
+
+# --- from here db_needed is TRUE: full database build, then bathymetry ---
+
+# tables to include — ctd_thin is the headline CTD table (adaptively thinned;
+# single cast direction, canonical measurement types, ~10 m grid + inflections).
+# ctd_summary backs the cruise-stats panel; ctd_cast supplies cast metadata.
 keep_tables <- c(
-  "ctd_cast",          # 6M rows
-  "ctd_measurement",   # 233M rows, partitioned by cruise_key
-  "ctd_summary",       # 105M rows, partitioned
-  "measurement_type",  # ~100 rows, ref
-  "ship")              # ref
+  "ctd_cast",          # cast metadata: (cruise, cast_key, cast_dir, datetime)
+  "ctd_thin",          # thinned profiles, partitioned by cruise_key — app default
+  "ctd_summary",       # station/depth aggregates, partitioned
+  "measurement_type",  # reference (incl. is_canonical)
+  "ship")              # reference
 
 # stage parquets + duckdb in a temp cache alongside the final target,
 # then rename into place once done.
@@ -61,8 +123,19 @@ info       <- cc_db_info(version = db_version)
 version_rs <- info$version
 cat("resolved version:", version_rs, "\n")
 
+# only request tables actually present in this release (defensive against
+# older releases that predate ctd_thin)
+avail   <- intersect(keep_tables, info$tables$name)
+missing <- setdiff(keep_tables, avail)
+if (length(missing) > 0)
+  cat("WARNING: not in release ", version_rs, ": ",
+      paste(missing, collapse = ", "), "\n", sep = "")
+stopifnot(
+  "release lacks ctd_thin — rebuild with v2026.05.14 or later" =
+    "ctd_thin" %in% avail)
+
 # cc_get_db names the output `calcofi_{version}.duckdb` in cache_dir
-staged_db  <- file.path(stage_dir, glue("calcofi_{version_rs}.duckdb"))
+staged_db <- file.path(stage_dir, glue("calcofi_{version_rs}.duckdb"))
 if (file.exists(staged_db)) {
   cat("removing stale staged db:", staged_db, "\n")
   file.remove(staged_db)
@@ -72,80 +145,45 @@ con <- cc_get_db(
   version    = version_rs,
   local_data = TRUE,
   cache_dir  = stage_dir,
-  tables     = keep_tables,
+  tables     = avail,
   refresh    = force_pull)
 
 # materialize partitioned views → native local tables ----
-# cc_get_db leaves partitioned tables (ctd_measurement, ctd_summary) as
-# remote S3 views; we need them physically present for an offline app.
-tbl_info  <- info$tables
-part_tbls <- tbl_info$name[
-  tbl_info$name %in% keep_tables & tbl_info$partitioned]
+# cc_get_db leaves partitioned tables (ctd_thin, ctd_summary) as remote S3
+# views; materialize them so the app runs fully offline.
+part_tbls <- info$tables$name[
+  info$tables$name %in% avail & info$tables$partitioned]
 
 for (tbl in part_tbls) {
   cat("materializing partitioned table:", tbl, "\n")
   tmp_name <- paste0(tbl, "_local")
   dbExecute(con, glue(
-    "CREATE OR REPLACE TABLE \"{tmp_name}\" AS ",
-    "SELECT * FROM \"{tbl}\""))
+    "CREATE OR REPLACE TABLE \"{tmp_name}\" AS SELECT * FROM \"{tbl}\""))
   dbExecute(con, glue("DROP VIEW IF EXISTS \"{tbl}\""))
-  dbExecute(con, glue(
-    "ALTER TABLE \"{tmp_name}\" RENAME TO \"{tbl}\""))
+  dbExecute(con, glue("ALTER TABLE \"{tmp_name}\" RENAME TO \"{tbl}\""))
   n <- dbGetQuery(con, glue("SELECT COUNT(*) AS n FROM \"{tbl}\""))$n
   cat("  ", tbl, ":", format(n, big.mark = ","), "rows\n")
 }
 
-# realign ctd_cast with ctd_measurement ----
-# upstream release discrepancy: ctd_cast uses old cruise_key format
-# ({YY}{MM}{ship_key}, e.g. '9802JD') and its ctd_cast_uuid is MD5'd against
-# that old key. ctd_measurement uses new format (YYYY-MM-{ship_nodc}, e.g.
-# '1998-02-31JD') for both cruise_key and UUID. Rebuild ctd_cast with the
-# new-format cruise_key and regenerated UUID so joins work.
-cat("realigning ctd_cast.cruise_key + ctd_cast_uuid with ctd_measurement...\n")
-dbExecute(con, "
-  CREATE OR REPLACE TABLE ctd_cast AS
-  WITH aligned AS (
-    SELECT
-      c.* EXCLUDE (cruise_key, ctd_cast_uuid),
-      (CASE WHEN CAST(substr(c.cruise_key, 1, 2) AS INT) >= 50 THEN '19' ELSE '20' END)
-        || substr(c.cruise_key, 1, 2) || '-'
-        || substr(c.cruise_key, 3, 2) || '-'
-        || s.ship_nodc AS cruise_key
-    FROM ctd_cast c
-    JOIN ship s ON c.ship_key = s.ship_key)
-  SELECT
-    -- reconstruct UUID v?-format string (8-4-4-4-12 split of md5 hex)
-    substr(_h, 1, 8)  || '-' ||
-    substr(_h, 9, 4)  || '-' ||
-    substr(_h, 13, 4) || '-' ||
-    substr(_h, 17, 4) || '-' ||
-    substr(_h, 21, 12) AS ctd_cast_uuid,
-    a.* EXCLUDE (_h)
-  FROM (
-    SELECT
-      *,
-      md5(concat_ws('|',
-        cruise_key,
-        CAST(cast_key AS VARCHAR),
-        CAST(cast_dir AS VARCHAR),
-        CAST(datetime_utc AS VARCHAR))) AS _h
-    FROM aligned) a
-")
-
-# verify alignment worked
-n_overlap <- dbGetQuery(con, "
+# verify FK integrity ----
+# ctd_thin and ctd_cast are built in the same ingest with a consistent
+# cruise_key and the deterministic ctd_cast_uuid, so every thinned cast must
+# resolve to a ctd_cast row (no realignment hack needed as of v2026.05.14).
+n_orphan <- dbGetQuery(con, "
   SELECT COUNT(*) AS n FROM (
-    SELECT DISTINCT ctd_cast_uuid FROM ctd_cast
-    INTERSECT
-    SELECT DISTINCT ctd_cast_uuid FROM ctd_measurement)")$n
-cat("  UUID overlap ctd_cast ∩ ctd_measurement:",
-    format(n_overlap, big.mark = ","), "\n")
-stopifnot("alignment failed: no UUID overlap" = n_overlap > 0)
+    SELECT DISTINCT ctd_cast_uuid FROM ctd_thin
+    EXCEPT
+    SELECT DISTINCT ctd_cast_uuid FROM ctd_cast)")$n
+cat("  ctd_thin casts not found in ctd_cast:", n_orphan, "\n")
+stopifnot("ctd_thin.ctd_cast_uuid is not a subset of ctd_cast" = n_orphan == 0)
 
-# add index on ctd_cast.ctd_cast_uuid for transect lookups ----
+# indexes for fast per-cruise + per-cast lookups ----
 cat("adding ART indexes...\n")
-dbExecute(con, "CREATE INDEX IF NOT EXISTS idx_ctdcast_uuid ON ctd_cast(ctd_cast_uuid)")
-dbExecute(con, "CREATE INDEX IF NOT EXISTS idx_ctdmeas_uuid ON ctd_measurement(ctd_cast_uuid)")
+dbExecute(con, "CREATE INDEX IF NOT EXISTS idx_ctdcast_uuid   ON ctd_cast(ctd_cast_uuid)")
+dbExecute(con, "CREATE INDEX IF NOT EXISTS idx_ctdcast_cruise ON ctd_cast(cruise_key)")
+dbExecute(con, "CREATE INDEX IF NOT EXISTS idx_ctdthin_uuid   ON ctd_thin(ctd_cast_uuid)")
+dbExecute(con, "CREATE INDEX IF NOT EXISTS idx_ctdthin_cruise ON ctd_thin(cruise_key)")
+dbExecute(con, "CREATE INDEX IF NOT EXISTS idx_ctdsumm_cruise ON ctd_summary(cruise_key)")
 
 # compact and close ----
 cat("analyzing + checkpointing...\n")
@@ -165,7 +203,9 @@ if (dir.exists(pq_dir)) {
 }
 unlink(file.path(stage_dir, "latest.txt"))
 unlink(list.files(stage_dir, "^catalog_.*\\.json$", full.names = TRUE))
-# leave stage_dir itself for future runs
 
 size_gb <- round(file.info(db_file)$size / 1024^3, 2)
 cat("done.\n  path:", db_file, "\n  size:", size_gb, "GB\n")
+
+# bathymetry — crop from the freshly built db (a forced run rebuilds both)
+if (bathy_needed) crop_bathy(db_file, gebco_src, bathy_tif)
