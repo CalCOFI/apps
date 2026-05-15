@@ -50,8 +50,8 @@ crop_bathy <- function(db, gebco_src, out_tif) {
     return(invisible())
   }
   con_b <- dbConnect(duckdb::duckdb(dbdir = db, read_only = TRUE))
-  # Limit DuckDB to 2 threads so it doesn't starve the Shiny server
-  dbExecute(con, "SET threads TO 2")
+  # Limit DuckDB threads so it doesn't starve the Shiny server
+  if (is_server) dbExecute(con, "SET threads TO 1")
   e <- dbGetQuery(con_b, "
     SELECT MIN(lon_dec) AS lon_min, MAX(lon_dec) AS lon_max,
            MIN(lat_dec) AS lat_min, MAX(lat_dec) AS lat_max
@@ -153,6 +153,9 @@ con <- cc_get_db(
   cache_dir  = stage_dir,
   tables     = avail,
   refresh    = force_pull)
+is_server <- if (Sys.info()[["sysname"]] == "Linux")
+# Limit DuckDB threads so it doesn't starve the Shiny server
+if (is_server) dbExecute(con, "SET threads TO 1")
 
 # materialize partitioned views → native local tables ----
 # cc_get_db leaves partitioned tables (ctd_thin, ctd_summary) as remote S3
