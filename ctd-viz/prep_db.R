@@ -23,6 +23,10 @@ librarian::shelf(
   DBI, duckdb, fs, glue, terra,
   quiet = TRUE)
 
+# parquets are 200+ MB; R's default download.file timeout of 60 s aborts
+# mid-stream on typical home connections. give it plenty of room.
+options(timeout = max(1800, getOption("timeout", 60)))
+
 # locate this script's directory
 cli_args <- commandArgs(trailingOnly = FALSE)
 file_arg <- sub("^--file=", "", cli_args[grepl("^--file=", cli_args)])
@@ -164,6 +168,34 @@ for (tbl in part_tbls) {
   n <- dbGetQuery(con, glue("SELECT COUNT(*) AS n FROM \"{tbl}\""))$n
   cat("  ", tbl, ":", format(n, big.mark = ","), "rows\n")
 }
+
+# derive app-facing helper columns on ctd_cast ----
+# cast_seq: numeric station-occupation order (drops the zero-pad on ord_occ);
+#   one row with ord_occ = "001B" gets NULL via TRY_CAST and is harmless.
+# dtime_pt: legible local Pacific time (America/Los_Angeles, auto DST) — used
+#   in the Casts table + map hover instead of UTC. datetime_utc stays in place
+#   for downstream code that wants the canonical timestamp.
+cat("adding cast_seq + dtime_pt to ctd_cast...\n")
+# icu provides named-timezone support (America/Los_Angeles -> auto DST)
+dbExecute(con, "INSTALL icu; LOAD icu;")
+# defensive: drop the geom column before any UPDATE touches ctd_cast. duckdb
+# (through at least v1.5.1) hits an internal `GetChildStats not implemented
+# for ColumnData of type GEOMETRY('OGC:CRS84')` on the row-group checkpoint
+# that follows an UPDATE / CREATE INDEX on a table carrying a CRS-tagged
+# GEOMETRY column. the app builds its own sf from lon_dec / lat_dec and
+# never reads ctd_cast.geom, so dropping it costs nothing here. revisit
+# once the upstream bug is fixed (issue: see CalCOFI/workflows refs).
+if ("geom" %in% dbListFields(con, "ctd_cast")) {
+  cat("  dropping ctd_cast.geom (unused by the app; avoids duckdb",
+      "GeoColumnData::GetChildStats checkpoint bug)\n")
+  dbExecute(con, "ALTER TABLE ctd_cast DROP COLUMN geom")
+}
+dbExecute(con, "ALTER TABLE ctd_cast ADD COLUMN IF NOT EXISTS cast_seq INTEGER")
+dbExecute(con, "UPDATE ctd_cast SET cast_seq = TRY_CAST(ord_occ AS INTEGER)")
+dbExecute(con, "ALTER TABLE ctd_cast ADD COLUMN IF NOT EXISTS dtime_pt TIMESTAMP")
+dbExecute(con,
+  "UPDATE ctd_cast SET dtime_pt =
+     (datetime_utc AT TIME ZONE 'UTC') AT TIME ZONE 'America/Los_Angeles'")
 
 # verify FK integrity ----
 # ctd_thin and ctd_cast are built in the same ingest with a consistent

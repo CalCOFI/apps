@@ -1,10 +1,10 @@
 # packages ----
 librarian::shelf(
-  bslib, bsicons, calcofi/calcofi4r,
+  bslib, bsicons, calcofi/calcofi4r, conductor,
   DBI, dbplyr, dplyr, DT, duckdb,
   geosphere, ggplot2, glue, htmltools,
   lubridate, mapgl, MBA, plotly,
-  purrr, sf, shiny, shinyjqui, stringr, terra,
+  purrr, readr, sf, shiny, shinyjqui, stringr, terra,
   tidyr, viridis,
   quiet = T)
 
@@ -36,12 +36,15 @@ con <- dbConnect(
 dbExecute(con, "INSTALL spatial; LOAD spatial;")
 
 # ctd_thin is the headline CTD table (adaptively thinned). confirm it's present
-# and probe for the optional retained_reason column (drives a stats metric).
+# and that the app-facing helper columns (cast_seq, dtime_pt) were baked in.
 stopifnot(
   "ctd_thin not in database; rebuild with prep_db.R against v2026.05.14+" =
     "ctd_thin" %in% dbListTables(con))
-thin_flds       <- dbListFields(con, "ctd_thin")
-thin_has_reason <- "retained_reason" %in% thin_flds
+cast_flds <- dbListFields(con, "ctd_cast")
+if (!all(c("cast_seq", "dtime_pt") %in% cast_flds))
+  stop(
+    "ctd_cast missing helper columns (cast_seq, dtime_pt). ",
+    "Rebuild with: Rscript prep_db.R latest TRUE")
 
 # bathymetry (loaded once at app start) ----
 # bathy_rast: full-res positive-down depth (m), land = 0 — used to sample
@@ -71,10 +74,22 @@ cruise_choices <- tbl(con, "ctd_cast") |>
     date_ym = format(date_min, "%Y-%m")) |>
   arrange(desc(date_ym), ship_name) |>
   mutate(
-    label = paste0(date_ym, " — ", ship_name, " (", cruise_key, ")"))
+    # strip the redundant YYYY-MM- prefix from cruise_key — it's already in
+    # date_ym, so "2025-11-33P4" -> "33P4" in the parenthetical
+    label = paste0(
+      date_ym, " — ", ship_name, " (",
+      sub("^\\d{4}-\\d{2}-", "", cruise_key), ")"))
 
 cruise_vec     <- setNames(cruise_choices$cruise_key, cruise_choices$label)
 default_cruise <- cruise_choices$cruise_key[1]
+
+# which cruises carry each measurement — used by server.R to filter the
+# cruise dropdown when the user picks a different variable (some cruises
+# don't carry, e.g., pH for older runs). built once at startup.
+meas_to_cruises <- dbGetQuery(con, "
+  SELECT DISTINCT measurement_type, cruise_key
+  FROM ctd_thin") |>
+  tibble::as_tibble()
 
 # measurement types — only those actually present in ctd_thin (the canonical
 # set), joined to measurement_type for human-readable labels + units
@@ -148,14 +163,14 @@ get_transect_bathy <- function(lons, lats, dists_km) {
     bathy_depth_m = pmax(depths, 0))
 }
 
-# assign short transect labels (A, B, C, … then 1, 2, 3 … beyond 26) to a set
-# of station occupations, in cruise-track (ord_occ) order. one source of truth
-# so the map markers and the plot x-axis agree.
+# map each station occupation to its cast_seq (numeric ord_occ, drops zero
+# padding). returned as character so it can drive plot/map text fields
+# directly. one source of truth so map markers and the plot x-axis agree.
 assign_occ_labels <- function(ord_occ) {
   o <- sort(unique(ord_occ[!is.na(ord_occ)]))
   if (length(o) == 0) return(setNames(character(0), character(0)))
-  labs <- if (length(o) <= 26) LETTERS[seq_along(o)]
-          else as.character(seq_along(o))
+  seq_int <- suppressWarnings(as.integer(o))
+  labs    <- ifelse(is.na(seq_int), o, as.character(seq_int))
   setNames(labs, o)
 }
 
@@ -191,13 +206,16 @@ build_transect_plotly <- function(meas_data, bathy_data = NULL,
 
   if (nrow(xyz) < 4) return(NULL)
 
-  # MBA interpolation (ODV-style smooth field)
+  # MBA interpolation (ODV-style smooth field). clip the visible grid to
+  # the actual data extent so the interpolated surface doesn't extrapolate
+  # into the bathymetry zone when the user drags the slider deeper.
   surf <- MBA::mba.surf(
     xyz[, c("x", "y", "z")], no.X = interp_n, no.Y = interp_n,
     extend = TRUE)$xyz.est
-  d_grid <- expand.grid(dist_km = surf$x, depth_m = surf$y) |>
+  grid_max <- min(max_depth, max(xyz$y, na.rm = TRUE) + 10)
+  d_grid   <- expand.grid(dist_km = surf$x, depth_m = surf$y) |>
     mutate(value = as.vector(surf$z)) |>
-    filter(depth_m >= 0, depth_m <= max_depth)
+    filter(depth_m >= 0, depth_m <= grid_max)
 
   # contour breaks shared by the lines and their value labels. one label per
   # level — placed on its longest contour piece, nearest the panel centre —
@@ -220,13 +238,10 @@ build_transect_plotly <- function(meas_data, bathy_data = NULL,
   } else ctr_lab <- NULL
 
   x_rng <- range(xyz$x)
-  # y-axis fits the data and the seafloor, capped at the Max depth control —
-  # avoids a sliver of data over a wedge of empty water
-  y_max <- min(
-    max_depth,
-    max(xyz$y,
-        if (!is.null(bathy_data)) bathy_data$bathy_depth_m else 0,
-        na.rm = TRUE))
+  # y-axis is driven directly by the Max-depth slider (server auto-sets it
+  # to data_max + small pad on each selection change). dragging the slider
+  # deeper exposes the bathymetry silhouette; shallower focuses on the data.
+  y_max <- max_depth
   y_rng <- c(0, y_max)
 
   p_main <- ggplot() +
@@ -341,6 +356,65 @@ build_transect_plotly <- function(meas_data, bathy_data = NULL,
     plotly::config(displayModeBar = TRUE)
 }
 
+# single-cast profile plotly: value on x, depth on y (0 at top). called when
+# the selection has exactly one occupation — the transect plot needs ≥ 2
+# casts to interpolate. an optional `bathy_depth` (seafloor depth in m at the
+# cast's lon/lat) is drawn as a dashed horizontal line.
+build_profile_plotly <- function(meas_data, meas_label, max_depth,
+                                 cruise_key = NULL, bathy_depth = NULL) {
+  d <- meas_data |>
+    filter(!is.na(measurement_value)) |>
+    arrange(depth_m)
+  if (nrow(d) < 2) return(NULL)
+
+  units_lab <- sub("^.*\\(([^)]*)\\)\\s*$", "\\1", meas_label)
+  cast_lab  <- unique(d$cast_seq)[1]
+  ttl <- if (!is.null(cruise_key)) {
+    glue("{meas_label} — Cast {cast_lab} on Cruise {cruise_key}")
+  } else {
+    glue("{meas_label} — Cast {cast_lab}")
+  }
+
+  p <- plotly::plot_ly(
+    data         = d,
+    x            = ~measurement_value,
+    y            = ~depth_m,
+    type         = "scatter",
+    mode         = "lines+markers",
+    line         = list(color = "#0077cc", width = 2),
+    marker       = list(
+      color = "#0077cc", size = 6,
+      line  = list(color = "white", width = 1)),
+    hovertemplate = paste0(
+      "<b>Depth:</b> %{y:.1f} m<br>",
+      meas_label, ": %{x:.3f}<extra></extra>"))
+
+  # seafloor as a dashed horizontal line, if a depth was supplied + visible
+  if (!is.null(bathy_depth) && !is.na(bathy_depth) &&
+      bathy_depth > 0 && bathy_depth <= max_depth) {
+    xr <- range(d$measurement_value, na.rm = TRUE)
+    p  <- p |>
+      plotly::add_segments(
+        x         = xr[1], xend = xr[2],
+        y         = bathy_depth, yend = bathy_depth,
+        line      = list(color = "#666", dash = "dash", width = 1),
+        hoverinfo = "skip", showlegend = FALSE, inherit = FALSE) |>
+      plotly::add_annotations(
+        x = xr[2], y = bathy_depth, xanchor = "right", yanchor = "bottom",
+        text = paste0("seafloor ≈ ", round(bathy_depth), " m"),
+        showarrow = FALSE,
+        font = list(size = 10, color = "#666"))
+  }
+
+  p |>
+    plotly::layout(
+      title  = list(text = ttl, x = 0, font = list(size = 13)),
+      xaxis  = list(title = units_lab, side = "top"),
+      yaxis  = list(title = "Depth (m)", range = c(max_depth, 0)),
+      margin = list(t = 80), showlegend = FALSE) |>
+    plotly::config(displayModeBar = TRUE)
+}
+
 # per-occupation depth summary for a cruise (max depth + # retained depths),
 # joining ctd_thin -> ctd_cast for ord_occ. measurement-independent, so it can
 # be computed once at cruise load and merged into the map tooltip.
@@ -355,78 +429,59 @@ occ_depth_summary <- function(con, cruise_key) {
     GROUP BY c.ord_occ"))
 }
 
-# cruise-level summary statistics for the Cruise Stats subtab. returns a tidy
-# (metric, value) tibble. ctd_cast and ctd_thin are stored at the depth-scan
-# grain, so every per-cast metric aggregates to the station occupation
-# (ord_occ) — joining ctd_thin -> ctd_cast where ord_occ is needed.
-cruise_stats <- function(con, cruise_key) {
-  ck <- cruise_key
-
-  # occupation-level cast counts
-  casts <- dbGetQuery(con, glue("
-    SELECT
-      COUNT(DISTINCT ord_occ)                                AS n_casts,
-      COUNT(DISTINCT ord_occ) FILTER (WHERE cast_dir = 'D')   AS n_down,
-      COUNT(DISTINCT ord_occ) FILTER (WHERE cast_dir = 'U')   AS n_up
-    FROM ctd_cast WHERE cruise_key = '{ck}'"))
-
-  # hours between consecutive station occupations (first datetime per occupation)
-  time_gap <- dbGetQuery(con, glue("
-    WITH occ AS (
-      SELECT ord_occ, MIN(datetime_utc) AS dt
-      FROM ctd_cast WHERE cruise_key = '{ck}' GROUP BY ord_occ),
-    g AS (
-      SELECT EPOCH(dt - LAG(dt) OVER (ORDER BY dt)) / 3600.0 AS gap_hr FROM occ)
-    SELECT ROUND(MEDIAN(gap_hr), 2) AS median_hr FROM g WHERE gap_hr IS NOT NULL"))
-
-  # depth gap between retained ctd_thin samples within an occupation profile
-  # (temperature_ave as the representative variable)
-  depth_gap <- dbGetQuery(con, glue("
-    WITH prof AS (
-      SELECT DISTINCT c.ord_occ, t.depth_m
-      FROM ctd_thin t
-      JOIN ctd_cast c ON t.ctd_cast_uuid = c.ctd_cast_uuid
-      WHERE t.cruise_key = '{ck}' AND t.measurement_type = 'temperature_ave'),
-    g AS (
-      SELECT depth_m - LAG(depth_m) OVER (
-               PARTITION BY ord_occ ORDER BY depth_m) AS gap_m
-      FROM prof)
-    SELECT ROUND(MEDIAN(gap_m), 2) AS median_m FROM g WHERE gap_m IS NOT NULL"))
-
-  # replicate-aggregation stats from ctd_summary
-  summ <- dbGetQuery(con, glue("
-    SELECT ROUND(AVG(n_obs), 2)  AS avg_n_obs,
-           ROUND(AVG(stddev), 4) AS avg_stddev
-    FROM ctd_summary WHERE cruise_key = '{ck}'"))
-
-  rows <- list(
-    c("Casts (station occupations)", format(casts$n_casts, big.mark = ",")),
-    c("Occupations with downcast / upcast",
-      paste(casts$n_down, "/", casts$n_up)),
-    c("Median hours between occupations", time_gap$median_hr),
-    c("Median depth gap, ctd_thin (m)",   depth_gap$median_m),
-    c("Avg replicates per site×depth×type (n_obs)", summ$avg_n_obs),
-    c("Avg stddev between replicates",     summ$avg_stddev))
-
-  if (thin_has_reason) {
-    infl <- dbGetQuery(con, glue("
-      WITH p AS (
-        SELECT c.ord_occ, t.retained_reason
-        FROM ctd_thin t
-        JOIN ctd_cast c ON t.ctd_cast_uuid = c.ctd_cast_uuid
-        WHERE t.cruise_key = '{ck}')
-      SELECT ROUND(
-        COUNT(*) FILTER (WHERE retained_reason = 'inflection')
-        / GREATEST(COUNT(DISTINCT ord_occ), 1)::DOUBLE, 1) AS per_cast
-      FROM p"))
-    rows <- c(rows, list(
-      c("Avg inflection samples per occupation", infl$per_cast)))
-  }
-
-  tibble(
-    metric = vapply(rows, `[`, character(1), 1),
-    value  = vapply(rows, `[`, character(1), 2))
-}
+# tour ----
+# conductor tour: auto-shown on first visit (gated client-side via
+# localStorage), and re-openable any time from the help icon in the header.
+# step `el` selectors target ids assigned in ui.R.
+tour <- Conductor$new(exitOnEsc = TRUE, keyboardNavigation = TRUE)$
+  step(
+    title = "Welcome to CalCOFI CTD Casts",
+    text  = "Explore <b>CTD</b> (<b>C</b>onductivity, <b>T</b>emperature,
+      <b>D</b>epth) casts from CalCOFI cruises (1949–present). The instrument
+      is lowered through the water column on a winch, recording temperature,
+      salinity (derived from conductivity), pressure, oxygen, and other
+      variables every few centimetres of descent.<br><br>
+      <b>What you're looking at:</b> casts have been adaptively thinned
+      (Douglas-Peucker, ~10 m grid + measurement inflections) and limited to
+      <b>downcasts only</b>, so the app stays fast while preserving the shape
+      of each profile.<br><br>
+      <i>Press Esc to exit at any time. Re-open this tour with the
+      <span style='font-size:1.1em'>?</span> in the header.</i>")$
+  step(
+    el    = "#sel_cruise + .selectize-control",
+    title = "Pick a cruise",
+    text  = "Cruises are labelled <b>YYYY-MM — ship (cruise_key)</b>, newest
+      first. Changing the cruise reloads the map, the table, and the plot.")$
+  step(
+    el    = "#sel_meas_type + .selectize-control",
+    title = "Pick a measurement",
+    text  = "The selected variable drives the transect plot and the
+      Measurements table. Choices are the canonical CTD variables retained in
+      <code>ctd_thin</code>. The cruise dropdown auto-filters to cruises
+      that actually carry the chosen variable.")$
+  step(
+    el    = "#pane_top",
+    title = "Map: pick a transect",
+    text  = "Click one station to anchor the transect, then click another —
+      every station between them along the cruise track gets selected.
+      Only casts that carry the chosen measurement appear on the map.
+      Selected casts are numbered by <b>cast_seq</b> (station-occupation
+      order).")$
+  step(
+    el    = "#subtabs",
+    title = "Table / Plot",
+    text  = "<b>Casts</b>: click rows to multi-select arbitrary stations,
+      reset the selection, and download.<br>
+      <b>Measurements</b>: the <code>ctd_thin</code> rows feeding the plot.<br>
+      <b>Plot</b>: ODV-style interpolated transect, with bathymetry as a
+      clipped silhouette underneath.")$
+  step(
+    el    = "#btn_settings",
+    title = "Plot settings",
+    text  = "Optional <b>Bathymetry</b> overlay on the map (GEBCO 2025
+      seafloor) and an optional <b>Max depth</b> cap on the plot y-axis &
+      Measurements table. Both default off / open so the plot fits the
+      data it just drew.")
 
 # cleanup ----
 onStop(function() {
