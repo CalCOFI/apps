@@ -24,6 +24,13 @@ ui <- page_fillable(
          original SVG has WHITE 'CalCOFI.io' text, hidden on light bg. */
       [data-bs-theme='light'] .ctdviz-logo-dark  { display: none; }
       [data-bs-theme='dark']  .ctdviz-logo-light { display: none; }
+      /* conductor tour popup — default Shepherd width (~400 px) makes the
+         intro paragraph tall enough to push the Next button off-screen.
+         widen, cap height + scroll the body so buttons stay reachable. */
+      .shepherd-element  { max-width: 560px !important; }
+      .shepherd-content  { max-height: 85vh;
+                           display: flex; flex-direction: column; }
+      .shepherd-text     { overflow-y: auto; }
     ")),
     tags$script(HTML("
       $(document).on('shiny:connected', function() {

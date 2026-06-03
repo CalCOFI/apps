@@ -35,6 +35,8 @@ dir_cache <- switch(
 #  recreate (since caches differ on server vs laptop); consider + cache_system column to track which cache
 url_cache <- "https://file.calcofi.io/cache_idw"
 
+# dbListTables(con)
+
 # ranges for date and depth
 rng_dates <- dbGetQuery(
   con, "SELECT MIN(date) min, MAX(date) max FROM ctd_casts")
