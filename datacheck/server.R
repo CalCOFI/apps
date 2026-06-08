@@ -35,7 +35,8 @@ server <- function(input, output, session) {
   # datasets actually present in this cruise, in palette order
   present_datasets <- reactive({
     d <- obs_all()
-    intersect(names(dataset_pal), unique(d$dataset))
+    # alphabetical, matching the schema site's chip order
+    sort(intersect(names(dataset_pal), unique(d$dataset)))
   })
 
   # --- dataset filter pills (rebuilt per cruise) --------------------------
@@ -48,11 +49,12 @@ server <- function(input, output, session) {
     } else present
     if (length(sel) == 0) sel <- present
     rv$pending_datasets <- NULL   # consume the URL hint after first use
+    # label = the provider_dataset key (matches the schema-site chips); the
+    # swatch color + pill styling are applied via CSS keyed on the input value
     checkboxGroupInput(
       "sel_datasets", label = NULL, inline = TRUE,
-      choiceNames  = unname(dataset_label[present]),
-      choiceValues = present,
-      selected     = sel)
+      choices  = present,
+      selected = sel)
   })
 
   # filtered observations (by the dataset pills)
