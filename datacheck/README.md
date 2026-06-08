@@ -42,8 +42,33 @@ pic_zooplankton, swfsc_cufes, calcofi_phyllosoma, calcofi_bird_mammal_census.
 (bird/mammal transects carry no `cruise_key`, so they appear in the obs table
 but not under a cruise.)
 
-## Run
+## Run (local)
 
 ```r
 shiny::runApp("apps/datacheck")
 ```
+
+## Deploy on the server (`shiny-server`)
+
+Same pattern as the other data-backed apps (e.g. `ctd-viz`): pull the repo,
+build the local DuckDB with `prep_db.R`, then symlink the app into
+`/srv/shiny-server` to turn it on at `https://shiny.calcofi.io/datacheck/`.
+
+```bash
+# 1. get the app
+cd /share/github/apps && git pull
+
+# 2. build /share/data/datacheck/datacheck.duckdb (~1 min).
+#    reads PUBLIC ingest parquet over HTTPS (gs://calcofi-db is public-read), so
+#    NO service-account credentials are needed — unlike the ERDDAP parquet sync.
+cd datacheck && Rscript prep_db.R          # skips if the db already exists
+#   Rscript prep_db.R TRUE                  # force a rebuild AFTER EACH RELEASE
+#                                           # to pick up new/updated datasets
+
+# 3. turn it on
+sudo ln -s /share/github/apps/datacheck /srv/shiny-server/datacheck
+```
+
+Re-run step 2 with `TRUE` after every `release_database.qmd` run so the cross-
+dataset `obs` table reflects the latest ingests. The build reads each dataset's
+`{table}.parquet` straight from `gs://calcofi-db/ingest/` via DuckDB `httpfs`.
