@@ -84,8 +84,11 @@ dataset_label <- c(
 
 # cruise choices ----
 # built from obs itself (so every cruise that has plottable observations
-# appears), enriched with ship_name from the cruise -> ship reference tables
-# where available. label: "YYYY-MM — ship · N datasets (cruise_suffix)".
+# appears), enriched with ship_name. the cruise_key convention is YYYY-MM-NODC,
+# so the trailing NODC code (chars 9+) maps straight to ship.ship_nodc — this
+# resolves a ship name for EVERY cruise, including those present only in CTD
+# (which aren't in the ichthyo-derived cruise table).
+# label: "YYYY-MM — ship · N datasets (cruise_suffix)".
 cruise_summary <- dbGetQuery(con, "
   SELECT
     o.cruise_key,
@@ -95,8 +98,7 @@ cruise_summary <- dbGetQuery(con, "
     COUNT(DISTINCT o.dataset)     AS n_datasets,
     s.ship_name                   AS ship_name
   FROM obs o
-  LEFT JOIN cruise c ON o.cruise_key = c.cruise_key
-  LEFT JOIN ship   s ON c.ship_key   = s.ship_key
+  LEFT JOIN ship s ON substr(o.cruise_key, 9) = s.ship_nodc
   WHERE o.cruise_key IS NOT NULL
   GROUP BY o.cruise_key, s.ship_name") |>
   as_tibble() |>
