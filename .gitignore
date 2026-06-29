@@ -5,6 +5,9 @@
 .DS_Store
 README.html
 cache
+app_cache/
 .Renviron
 */marmap_coord_*
 .positai
+*/restart.txt
+.claude
