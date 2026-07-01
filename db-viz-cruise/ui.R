@@ -6,7 +6,7 @@
 # through it.
 
 # per-dataset swatch color for the filter pills — driven by dataset_pal (which
-# comes from the GCS erd_legend sidecar, same source as calcofi.io/schema).
+# comes from the GCS erd_legend sidecar, same source as calcofi.io/db-schema).
 # keyed by the checkbox input's value (provider_dataset) via :has(), so colors
 # stay correct regardless of which datasets a given cruise happens to include.
 swatch_css <- paste(
@@ -27,7 +27,7 @@ ui <- page_fillable(
       .dc-header .shiny-input-container {{ margin-bottom: 0; }}
       [data-bs-theme='light'] .dc-logo-dark  {{ display: none; }}
       [data-bs-theme='dark']  .dc-logo-light {{ display: none; }}
-      /* theme vars mirroring calcofi.io/schema (dark default + light) */
+      /* theme vars mirroring calcofi.io/db-schema (dark default + light) */
       :root, [data-bs-theme='dark'] {{
         --dc-accent: #4dabf7; --dc-border: #3a3f44; --dc-panel2: #2c3035; --dc-fg: #e6e9ed; }}
       [data-bs-theme='light'] {{

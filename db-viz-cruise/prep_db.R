@@ -17,9 +17,9 @@ args       <- commandArgs(trailingOnly = TRUE)
 force_pull <- length(args) >= 1 && as.logical(args[1])
 
 db_file <- if (dir.exists("/share/data")) {
-  "/share/data/datacheck/datacheck.duckdb"
+  "/share/data/db-viz-cruise/db-viz-cruise.duckdb"
 } else {
-  path.expand("~/_big/calcofi.org/datacheck/datacheck.duckdb")
+  path.expand("~/_big/calcofi.org/db-viz-cruise/db-viz-cruise.duckdb")
 }
 dir_create(path_dir(db_file))
 if (file.exists(db_file) && !force_pull) {

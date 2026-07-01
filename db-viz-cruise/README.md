@@ -1,4 +1,4 @@
-# datacheck
+# db-viz-cruise
 
 Cross-dataset observation explorer for CalCOFI. Pick a **cruise** and see every
 released dataset's sampling stations for it on a **map + table + space-time
@@ -21,7 +21,7 @@ The **Copy link** button (and the address bar) always reflect the current view.
 
 ## Data
 
-`prep_db.R` builds `datacheck.duckdb` with one unified `obs` table — one row per
+`prep_db.R` builds `db-viz-cruise.duckdb` with one unified `obs` table — one row per
 sampling event across all 9 released datasets, projected to a common schema
 (`dataset, tbl, id, cruise_key, latitude, longitude, datetime, site_key`), read
 via DuckDB `httpfs` from the GCS ingest parquet
@@ -33,8 +33,8 @@ Rscript prep_db.R          # build (skips if present)
 Rscript prep_db.R TRUE     # force rebuild
 ```
 
-Output: `/share/data/datacheck/datacheck.duckdb` on the server, else
-`~/_big/calcofi.org/datacheck/datacheck.duckdb` locally.
+Output: `/share/data/db-viz-cruise/db-viz-cruise.duckdb` on the server, else
+`~/_big/calcofi.org/db-viz-cruise/db-viz-cruise.duckdb` locally.
 
 Datasets covered: calcofi_bottle (casts), calcofi_ctd-cast (ctd_cast),
 calcofi_dic (dic_sample), swfsc_ichthyo (site), cce-lter_euphausiids,
@@ -45,28 +45,28 @@ but not under a cruise.)
 ## Run (local)
 
 ```r
-shiny::runApp("apps/datacheck")
+shiny::runApp("apps/db-viz-cruise")
 ```
 
 ## Deploy on the server (`shiny-server`)
 
 Same pattern as the other data-backed apps (e.g. `ctd-viz`): pull the repo,
 build the local DuckDB with `prep_db.R`, then symlink the app into
-`/srv/shiny-server` to turn it on at `https://shiny.calcofi.io/datacheck/`.
+`/srv/shiny-server` to turn it on at `https://shiny.calcofi.io/db-viz-cruise/`.
 
 ```bash
 # 1. get the app
 cd /share/github/apps && git pull
 
-# 2. build /share/data/datacheck/datacheck.duckdb (~1 min).
+# 2. build /share/data/db-viz-cruise/db-viz-cruise.duckdb (~1 min).
 #    reads PUBLIC ingest parquet over HTTPS (gs://calcofi-db is public-read), so
 #    NO service-account credentials are needed — unlike the ERDDAP parquet sync.
-cd datacheck && Rscript prep_db.R          # skips if the db already exists
+cd db-viz-cruise && Rscript prep_db.R          # skips if the db already exists
 #   Rscript prep_db.R TRUE                  # force a rebuild AFTER EACH RELEASE
 #                                           # to pick up new/updated datasets
 
 # 3. turn it on
-sudo ln -s /share/github/apps/datacheck /srv/shiny-server/datacheck
+sudo ln -s /share/github/apps/db-viz-cruise /srv/shiny-server/db-viz-cruise
 ```
 
 Re-run step 2 with `TRUE` after every `release_database.qmd` run so the cross-
