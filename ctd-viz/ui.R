@@ -6,7 +6,8 @@
 # A conductor tour walks first-time visitors through the controls and can be
 # re-opened from the ? icon next to the title.
 
-ui <- page_fillable(
+# wrapped in function(request) so Shiny can restore state from a bookmarked URL
+ui <- function(request) page_fillable(
   title           = "CalCOFI CTD Visualization",
   fillable_mobile = FALSE,
   padding         = 6,
@@ -33,7 +34,11 @@ ui <- page_fillable(
       .shepherd-text     { overflow-y: auto; }
     ")),
     tags$script(HTML("
+      // capture the bookmark query string at page load, before Shiny strips
+      // it from the URL, so the server can restore the cast selection from it
+      var CTDVIZ_INITIAL_SEARCH = window.location.search;
       $(document).on('shiny:connected', function() {
+        Shiny.setInputValue('bookmark_search', CTDVIZ_INITIAL_SEARCH, {priority: 'event'});
         var seen = false;
         try { seen = localStorage.getItem('ctdviz_tour_seen') === 'true'; } catch(e) {}
         Shiny.setInputValue('tour_seen', seen, {priority: 'event'});
@@ -62,7 +67,14 @@ ui <- page_fillable(
         title = "Show the tour"),
       # sun / moon toggle — bslib swaps data-bs-theme on the page; the
       # server observer mirrors it onto the maplibre basemap.
-      input_dark_mode(id = "dark_toggle", mode = "dark")),
+      input_dark_mode(id = "dark_toggle", mode = "dark"),
+      # copy a shareable link that reopens this cruise + measurement + cast
+      # selection (url bookmarking; enabled in global.R)
+      bookmarkButton(
+        label = "Share",
+        icon  = bsicons::bs_icon("share"),
+        title = "Copy a link that reopens this cruise, measurement and cast selection",
+        class = "btn-sm btn-link text-body-secondary p-0 border-0 ms-1")),
     div(
       class = "flex-grow-1",
       style = "min-width: 240px;",

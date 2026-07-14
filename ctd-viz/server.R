@@ -22,12 +22,68 @@
 server <- function(input, output, session) {
 
   rv <- reactiveValues(
-    cruise_key = NULL,           # loaded cruise
-    all_casts  = NULL,           # df: every ctd_cast row for the cruise (per scan)
-    map_casts  = NULL,           # sf: one row per ord_occ (station occupation)
-    sel_occ    = character(0),   # selected ord_occ — THE selection store
-    sel_anchor = NULL,           # in-progress transect start (map picker)
-    sel_source = NULL)           # "map" | "table" | "reset"
+    cruise_key  = NULL,          # loaded cruise
+    all_casts   = NULL,          # df: every ctd_cast row for the cruise (per scan)
+    map_casts   = NULL,          # sf: one row per ord_occ (station occupation)
+    sel_occ     = character(0),  # selected ord_occ — THE selection store
+    sel_anchor  = NULL,          # in-progress transect start (map picker)
+    sel_source  = NULL,          # "map" | "table" | "reset" | "restore"
+    pending_sel = NULL)          # cast selection awaiting restore (url bookmark)
+
+  # === URL bookmarking =====================================================
+  # shareable links (store = "url", enabled in global.R). the cruise,
+  # measurement, active tab, depth cap and bathymetry toggle are plain inputs
+  # and round-trip automatically. the cast selection lives in rv$sel_occ (not
+  # an input): onBookmark writes it into the link's _values_, and it is read
+  # back on restore from the query string (below) — onRestore does not fire for
+  # global.R-enabled bookmarking on this Shiny build, but input restore does.
+  #
+  # exclude the noisy map / table / pane event inputs — restoring them would
+  # re-fire the selection writers with stale, pre-load row indices (and bloat
+  # the link); the cast selection is restored via sel_occ instead.
+  setBookmarkExclude(c(
+    "._bookmark_", "bookmark_search", "tour_seen", "dark_toggle",
+    "btn_help", "btn_reset_sel", "btn_settings", "dl_data",
+    "pane_top__shinyjquiBookmarkState__resizable", "pane_top_size",
+    "pane_top_is_resizing",
+    "map_cruise_bbox", "map_cruise_feature_click", "map_cruise_click",
+    "map_cruise_bounds", "map_cruise_center", "map_cruise_zoom",
+    "tbl_casts_columns_selected", "tbl_casts_cells_selected",
+    "tbl_casts_rows_selected", "tbl_casts_row_last_clicked",
+    "tbl_casts_rows_current", "tbl_casts_rows_all", "tbl_casts_state",
+    "tbl_casts_search", "tbl_casts_search_columns", "tbl_casts_cell_clicked",
+    "tbl_values_rows_current", "tbl_values_rows_all", "tbl_values_state",
+    "tbl_values_search", "tbl_values_cell_clicked"))
+
+  # save the cast selection into the bookmark link
+  onBookmark(function(state) {
+    state$values$sel_occ <- rv$sel_occ
+  })
+
+  # restore the cast selection: ui.R stashes the page's initial query string
+  # (before Shiny strips it) and sends it as input$bookmark_search on connect.
+  # parse sel_occ out of it and stage it for the applier below.
+  observeEvent(input$bookmark_search, once = TRUE, {
+    q   <- parseQueryString(input$bookmark_search)
+    occ <- tryCatch(jsonlite::fromJSON(q[["sel_occ"]]), error = function(e) NULL)
+    if (length(occ) > 0)
+      rv$pending_sel <- as.character(occ)
+  })
+
+  # apply the pending restored selection once the cruise's stations have loaded
+  # (the loader resets sel_occ, so this must run after it). reacts to whichever
+  # of the two arrives last. no-op in a normal session (pending_sel stays NULL).
+  observe({
+    occ <- rv$pending_sel
+    mc  <- rv$map_casts
+    if (is.null(occ) || is.null(mc)) return()
+    rv$pending_sel <- NULL
+    valid <- mc$ord_occ[as.character(mc$ord_occ) %in% occ]
+    if (length(valid) > 0) {
+      rv$sel_source <- "restore"
+      rv$sel_occ    <- valid
+    }
+  })
 
   cruise_segments <- reactive({
     req(rv$map_casts)

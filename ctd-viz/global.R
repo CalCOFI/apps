@@ -8,6 +8,13 @@ librarian::shelf(
   tidyr, viridis,
   quiet = T)
 
+# url bookmarking ----
+# shareable links that restore the cruise, measurement, active tab, depth cap
+# and cast selection. plain inputs round-trip automatically; the cast selection
+# (rv$sel_occ) is saved with onBookmark and restored from the query string in
+# server.R (see the "URL bookmarking" block there).
+enableBookmarking(store = "url")
+
 # paths ----
 app_dir <- dirname(normalizePath(
   sys.frame(1)$ofile %||% "global.R", mustWork = FALSE))
