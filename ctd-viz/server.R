@@ -326,7 +326,9 @@ server <- function(input, output, session) {
   # maplibre feature does not auto-highlight it, so the proxy must (re)apply
   # the pink styling here regardless of who wrote the store. proxy ops don't
   # fire click events, so this can't loop.
-  observeEvent(rv$sel_occ, {
+  # paint the current selection's pink styling onto the map. factored out so
+  # both the selection observer and the map-load observer below can call it.
+  paint_map_selection <- function() {
     proxy  <- maplibre_proxy("map_cruise")
     mc_lab <- rv$map_casts
     if (is.null(mc_lab)) return()
@@ -354,7 +356,18 @@ server <- function(input, output, session) {
         set_paint_property("sel-segments", "line-opacity", 1) |>
         set_source("sel-labels", mc_lab)
     }
-  }, ignoreNULL = FALSE, ignoreInit = TRUE)
+  }
+
+  # re-style on every selection change
+  observeEvent(rv$sel_occ, paint_map_selection(),
+               ignoreNULL = FALSE, ignoreInit = TRUE)
+
+  # re-apply once the map has (re)loaded. a restored or programmatic selection
+  # is set before the map's first client render finishes, so the observer above
+  # would style a map that isn't ready yet and the pink transect would be lost.
+  # the map emits its bounds once loaded (and on each move) — use that as the
+  # "ready" signal to paint the current selection in.
+  observeEvent(input$map_cruise_bbox, paint_map_selection())
 
   # store -> table proxy
   observeEvent(rv$sel_occ, {
