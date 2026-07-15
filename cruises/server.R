@@ -57,71 +57,46 @@ server <- function(input, output, session) {
 
     withProgress(message = "Loading cruise data...", {
 
-      # query sites per dataset for this cruise ----
+      # query root station events per dataset for this cruise ----
+      # all datasets now share the unified `sample` event dimension; root
+      # (station) events have parent_sample_key IS NULL and carry grid_key,
+      # lat/long and datetime directly. map each release dataset_key back to the
+      # short label the app uses downstream (colors, legend, tracks).
+      setProgress(0.2, detail = "Loading sample events...")
+      ds_labels <- c(
+        swfsc_ichthyo      = "ichthyo",
+        calcofi_bottle     = "bottle",
+        `calcofi_ctd-cast` = "ctd-cast",
+        calcofi_dic        = "dic")
+
+      d_pts <- tryCatch(
+        tbl(con, "sample") |>
+          filter(
+            cruise_key == !!ck,
+            is.na(parent_sample_key),
+            dataset_key %in% !!names(ds_labels)) |>
+          select(sample_key, dataset_key, grid_key, longitude, latitude, datetime) |>
+          collect(),
+        error = function(e) tibble())
+
       pts_list <- list()
-
-      # ichthyo sites
-      setProgress(0.1, detail = "Ichthyo sites...")
-      d_ich <- tryCatch(
-        tbl(con, "site") |>
-          filter(cruise_key == !!ck) |>
-          select(site_key, latitude, longitude, line, station) |>
-          collect(),
-        error = function(e) tibble())
-      if (nrow(d_ich) > 0) {
-        pts_list$ichthyo <- d_ich |>
-          mutate(dataset = "ichthyo", lon = longitude, lat = latitude) |>
-          select(dataset, site_key, lon, lat)
-      }
-
-      # bottle casts
-      setProgress(0.3, detail = "Bottle casts...")
-      d_bot <- tryCatch(
-        tbl(con, "casts") |>
-          filter(cruise_key == !!ck) |>
-          select(site_key, lon_dec, lat_dec, datetime_utc) |>
-          collect(),
-        error = function(e) tibble())
-      if (nrow(d_bot) > 0) {
-        pts_list$bottle <- d_bot |>
-          mutate(dataset = "bottle", lon = lon_dec, lat = lat_dec) |>
-          select(dataset, site_key, lon, lat, datetime_utc)
-      }
-
-      # ctd casts
-      setProgress(0.5, detail = "CTD casts...")
-      d_ctd_pts <- tryCatch(
-        tbl(con, "ctd_cast") |>
-          filter(cruise_key == !!ck) |>
-          select(site_key, lon_dec, lat_dec, datetime_utc, cast_dir) |>
-          collect() |>
-          # deduplicate: one point per station (prefer D over U)
-          arrange(site_key, cast_dir) |>
-          distinct(site_key, .keep_all = TRUE),
-        error = function(e) tibble())
-      if (nrow(d_ctd_pts) > 0) {
-        pts_list$`ctd-cast` <- d_ctd_pts |>
-          mutate(dataset = "ctd-cast", lon = lon_dec, lat = lat_dec) |>
-          select(dataset, site_key, lon, lat, datetime_utc)
-      }
-
-      # dic samples
-      setProgress(0.6, detail = "DIC samples...")
-      d_dic_pts <- tryCatch(
-        tbl(con, "dic_sample") |>
-          inner_join(
-            tbl(con, "casts") |>
-              filter(cruise_key == !!ck) |>
-              select(cast_id, site_key, lon_dec, lat_dec, datetime_utc),
-            by = "cast_id") |>
-          select(site_key, lon_dec, lat_dec, datetime_utc) |>
-          distinct(site_key, .keep_all = TRUE) |>
-          collect(),
-        error = function(e) tibble())
-      if (nrow(d_dic_pts) > 0) {
-        pts_list$dic <- d_dic_pts |>
-          mutate(dataset = "dic", lon = lon_dec, lat = lat_dec) |>
-          select(dataset, site_key, lon, lat, datetime_utc)
+      if (nrow(d_pts) > 0) {
+        d_pts <- d_pts |>
+          mutate(
+            dataset      = unname(ds_labels[dataset_key]),
+            lon          = longitude,
+            lat          = latitude,
+            datetime_utc = datetime,
+            # ctd-cast mints one root event per cast direction (…NNNd / …NNNu);
+            # collapse to one point per station (prefer D) so the map matches the
+            # table's ctd_cast count. other datasets are already one root/station.
+            station_key  = ifelse(
+              dataset == "ctd-cast", sub("[ud]$", "", sample_key), sample_key)) |>
+          filter(!is.na(lon), !is.na(lat)) |>
+          arrange(station_key, sample_key) |>
+          distinct(station_key, .keep_all = TRUE) |>
+          select(dataset, sample_key, grid_key, lon, lat, datetime_utc)
+        pts_list <- split(d_pts, d_pts$dataset)
       }
 
       setProgress(0.8, detail = "Building map...")
@@ -151,15 +126,10 @@ server <- function(input, output, session) {
         error = function(e) NULL)
 
       if (!is.null(grid_sf) && nrow(grid_sf) > 0) {
-        # filter to grids that contain data points
+        # filter to grids that contain data points — grid_key now travels with
+        # each `sample` row, so no lookup against retired event tables is needed
         grid_keys_used <- all_pts |>
-          inner_join(
-            DBI::dbGetQuery(con, glue(
-              "SELECT DISTINCT site_key, grid_key FROM site
-               UNION
-               SELECT DISTINCT site_key, grid_key FROM casts")) |>
-              filter(!is.na(grid_key)),
-            by = "site_key") |>
+          filter(!is.na(grid_key)) |>
           pull(grid_key) |>
           unique()
 
@@ -207,7 +177,7 @@ server <- function(input, output, session) {
               circle_opacity      = 0.85,
               circle_stroke_color = "#ffffff",
               circle_stroke_width = 1,
-              tooltip             = "site_key")
+              tooltip             = "sample_key")
         }
       }
 
