@@ -23,6 +23,10 @@ ui <- page_fillable(
   useConductor(),
 
   tags$head(
+    # GA4, from the one snippet shared by every CalCOFI app (calcofi4r is
+    # already attached here, so this costs nothing and cannot go stale).
+    # log_url = "" keeps the usage-log Sheet leg off — drop it to opt in.
+    calcofi4r::cc_ga_head("db-viz-cruise", log_url = ""),
     tags$style(HTML(glue::glue("
       .dc-header .shiny-input-container {{ margin-bottom: 0; }}
       [data-bs-theme='light'] .dc-logo-dark  {{ display: none; }}

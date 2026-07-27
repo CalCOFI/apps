@@ -64,7 +64,10 @@ ui <- function(request) {
   dashboardBody(
     shinyjs::useShinyjs(),
     tags$head(tags$link(rel="stylesheet", type="text/css", href="styles.css")),
-    tags$head(includeHTML("google-analytics.html")),
+    # GA4, from the one snippet shared by every CalCOFI app (calcofi4r is
+    # already attached here, so this costs nothing and cannot go stale).
+    # log_url = "" keeps the usage-log Sheet leg off — drop it to opt in.
+    tags$head(calcofi4r::cc_ga_head("oceano", log_url = "")),
     tabsetPanel(
       id = "tabs",
       tabPanel(

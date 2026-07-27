@@ -17,7 +17,10 @@ page_sidebar(
       choices  = vars,
       selected = var_default) ),
 
-  tags$head(includeHTML("google-analytics.html")),
+  # GA4, from the one snippet shared by every CalCOFI app (calcofi4r is already
+  # attached here, so this costs nothing and cannot go stale). log_url = "" keeps
+  # the usage-log Sheet leg off — drop it to opt in.
+  tags$head(calcofi4r::cc_ga_head("copernicus", log_url = "")),
 
     leafletOutput("map"),
   

@@ -19,6 +19,10 @@ ui <- function(request) page_fillable(
   # the server stamp localStorage when it's been shown. tiny CSS overrides
   # tighten the top header (no form-group margin on the dropdowns) ----
   tags$head(
+    # GA4, from the one snippet shared by every CalCOFI app (calcofi4r is
+    # already attached here, so this costs nothing and cannot go stale).
+    # log_url = "" keeps the usage-log Sheet leg off — drop it to opt in.
+    calcofi4r::cc_ga_head("ctd-viz", log_url = ""),
     tags$style(HTML("
       .ctdviz-header .shiny-input-container { margin-bottom: 0; }
       /* swap the logo variant based on the page's bslib theme — the
