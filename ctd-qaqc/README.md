@@ -109,9 +109,18 @@ rule says so: the original compared the ship's echosounder reading to the statio
 average, catching a bad sounder *or* a mispositioned cast; the GEBCO form tests
 position plausibility only.
 
-Parked rules are listed in the Rules tab with the reason they cannot run yet —
-spike, pressure monotonicity and up/down disagreement all need `obs_ctd_full` at
-full scan resolution.
+### Full-resolution rules run against the release in place
+
+Four rules — temperature and salinity spikes, loop edits, and down-vs-upcast
+disagreement — need `obs_ctd_full`, the 212 M-row full-resolution scans. Those are
+**not materialized**: `prep_db.R` creates a view over the release (a local copy
+when there is one, otherwise GCS over `httpfs`), because copying 212 M rows to
+serve rules that are always run per profile would bloat this database ~30×.
+
+`obs_ctd_full` is hive-partitioned by `cruise_key`, so one cruise prunes to ~2 M
+rows and each rule returns in about 0.04 s. These rules are therefore
+**cruise-scoped**: pick a cruise in the sidebar, and without one they report
+`skip` — again, never `pass`.
 
 Related: `apps/ctd-viz` (profile inspection — findings deep-link into it),
 `CalCOFI/workflows` (the pipeline, the rules, and the plan under `libs/plans/`).

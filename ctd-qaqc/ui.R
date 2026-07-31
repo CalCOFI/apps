@@ -28,6 +28,19 @@ function(request) {
         choiceValues = rules_active$rule_key,
         selected     = rules_active$rule_key),
 
+      # obs_ctd_full is 212M rows, hive-partitioned by cruise_key. The profile
+      # rules are only meaningful per profile anyway, so they are run one cruise at
+      # a time and SKIP (never pass) when no cruise is chosen.
+      selectInput(
+        "cruise", "Cruise (for full-resolution rules)",
+        choices  = c("— none: full-resolution rules will skip —" = "",
+                     setNames(cruises$cruise_key,
+                              paste0(cruises$cruise_key, "  (", cruises$n_casts, " casts)"))),
+        selected = ""),
+      helpText(glue(
+        "{n_cruise_scoped} rule(s) read the full-resolution scans and need a cruise; ",
+        "the rest run over the whole CTD slice.")),
+
       input_task_button("run", "Run selected", icon = bsicons::bs_icon("play-fill")),
       hr(),
       textInput("reviewer", "Reviewer", placeholder = "your name"),

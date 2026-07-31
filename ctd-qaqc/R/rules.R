@@ -112,11 +112,16 @@ qc_present_types <- function(con, dataset_key = "calcofi_ctd-cast") {
 #' anything is worse than no tool, so an unmet precondition is `skip`, never `pass`.
 #'
 #' @param present_types output of [qc_present_types()]; NULL disables the check
+#' @param scope_values named list supplying scope parameters, e.g.
+#'   `list(cruise_key = "2023-11-33P4")`. A rule with `scope = "cruise"` runs
+#'   against obs_ctd_full (212M rows, hive-partitioned by cruise_key) and is
+#'   meaningless unscoped, so it SKIPS rather than silently scanning everything.
 #' @param limit cap rows returned to the UI. The COUNT is always computed over the
 #'   full result, so a truncated display never understates the problem — a rule
 #'   that silently showed 500 of 40,000 hits would read as "minor".
 #' @return list(rule_key, n, findings, elapsed_s, error, skipped, skip_reason)
-qc_run_rule <- function(con, rule, limit = 500L, present_types = NULL) {
+qc_run_rule <- function(con, rule, limit = 500L, present_types = NULL,
+                        scope_values = list()) {
   t0 <- Sys.time()
   out <- list(rule_key = rule$rule_key, n = NA_integer_, findings = NULL,
               elapsed_s = NA_real_, error = NA_character_,
@@ -134,12 +139,23 @@ qc_run_rule <- function(con, rule, limit = 500L, present_types = NULL) {
     }
   }
 
+  scope <- rule$scope %||% NA_character_
+  if (!is.na(scope) && scope == "cruise" &&
+      !nzchar(scope_values$cruise_key %||% "")) {
+    out$skipped     <- TRUE
+    out$skip_reason <- "needs a cruise — this rule reads the 212M-row obs_ctd_full and is only run one cruise at a time"
+    out$elapsed_s   <- 0
+    return(out)
+  }
+
   res <- try({
     # `rule` is a one-row tibble, so rule$params is a LIST COLUMN — a list of one
     # containing the params. Unwrap it, or every {{placeholder}} silently fails to
     # resolve and the rule errors far from its cause.
     prm <- rule$params
     if (is.list(prm) && length(prm) == 1 && is.list(prm[[1]])) prm <- prm[[1]]
+    # scope values (e.g. cruise_key) are supplied at run time, not in the registry
+    prm <- utils::modifyList(prm, scope_values)
     sql <- qc_render_sql(rule$sql, prm)
     n <- dbGetQuery(con, glue("SELECT COUNT(*) AS n FROM ({sql})"))$n
     f <- if (n > 0) dbGetQuery(con, glue("SELECT * FROM ({sql}) LIMIT {limit}")) else
@@ -163,10 +179,12 @@ qc_run_rule <- function(con, rule, limit = 500L, present_types = NULL) {
 #'
 #' @param on_progress optional callback(i, n, rule_key) for the UI
 qc_run_all <- function(con, rules, limit = 500L, on_progress = NULL,
-                       present_types = qc_present_types(con)) {
+                       present_types = qc_present_types(con),
+                       scope_values = list()) {
   lapply(seq_len(nrow(rules)), \(i) {
     if (!is.null(on_progress)) on_progress(i, nrow(rules), rules$rule_key[i])
-    qc_run_rule(con, rules[i, ], limit = limit, present_types = present_types)
+    qc_run_rule(con, rules[i, ], limit = limit, present_types = present_types,
+                scope_values = scope_values)
   })
 }
 
@@ -182,7 +200,8 @@ qc_summarize <- function(results, rules) {
     error       = vapply(results, \(r) r$error %||% NA_character_, character(1)),
     skipped     = vapply(results, \(r) isTRUE(r$skipped), logical(1)),
     skip_reason = vapply(results, \(r) r$skip_reason %||% NA_character_, character(1))) |>
-    left_join(rules |> select(rule_key, rule_type, severity, target, description),
+    left_join(rules |> select(rule_key, rule_type, severity, target, description,
+                              any_of("scope")),
               by = "rule_key") |>
     mutate(status = case_when(
       skipped             ~ "skip",
@@ -192,7 +211,7 @@ qc_summarize <- function(results, rules) {
       TRUE                ~ "flag"),
       note = coalesce(error, skip_reason)) |>
     select(rule_key, status, n, severity, rule_type, target, description,
-           elapsed_s, note)
+           any_of("scope"), elapsed_s, note)
 }
 
 `%||%` <- function(x, y) if (is.null(x)) y else x

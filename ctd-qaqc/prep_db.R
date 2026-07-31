@@ -26,8 +26,10 @@
 # handle on one file at once — and because a re-prep should replace the
 # materialized copy without ever touching a reviewer's work.
 #
-# The full-resolution obs_ctd_full (212M rows) is deliberately NOT materialized —
-# the spike and up/down rules that need it are parked (see rules.csv).
+#   obs_ctd_full   a VIEW over the release, NOT materialized. The profile rules
+#                  (spike, loop edit, up/down disagreement) need full-resolution
+#                  scans, but 212M rows would bloat this database ~30x for rules
+#                  that are always run one cruise at a time. See below.
 
 devtools::load_all("../../calcofi4r")
 librarian::shelf(DBI, duckdb, fs, glue, readr, quiet = TRUE)
@@ -37,6 +39,13 @@ options(timeout = max(1800, getOption("timeout", 60)))
 cli_args <- commandArgs(trailingOnly = FALSE)
 file_arg <- sub("^--file=", "", cli_args[grepl("^--file=", cli_args)])
 app_dir  <- if (length(file_arg) > 0) dirname(normalizePath(file_arg, mustWork = FALSE)) else getwd()
+
+# a local release checkout, if this machine has one (dev); NULL on the server
+dir_releases_local <- local({
+  p <- normalizePath(file.path(app_dir, "../../workflows/data/releases"), mustWork = FALSE)
+  if (dir.exists(p)) p else NULL
+})
+`%||%` <- function(x, y) if (is.null(x)) y else x
 
 args       <- commandArgs(trailingOnly = TRUE)
 db_version <- if (length(args) >= 1) args[1] else "latest"
@@ -143,6 +152,32 @@ if (file.exists(gebco_tif)) {
 dbExecute(con, "CREATE INDEX IF NOT EXISTS idx_obs_sample ON obs(sample_key)")
 dbExecute(con, "CREATE INDEX IF NOT EXISTS idx_obs_type   ON obs(measurement_type)")
 dbExecute(con, "CREATE INDEX IF NOT EXISTS idx_smp_key    ON sample(sample_key)")
+
+# -- obs_ctd_full: a VIEW over the release, deliberately NOT materialized -------
+# The full-resolution scans are 212M rows / ~1.2 GB. The profile rules (spike,
+# loop edit, up/down disagreement) need them, but materializing would bloat this
+# database ~30x for rules that are always run ONE CRUISE AT A TIME.
+#
+# obs_ctd_full is hive-partitioned by cruise_key, so a cruise-scoped query prunes
+# to ~2M rows: measured at 0.02 s locally against 212M. A view costs nothing until
+# queried and always reflects the current release.
+#
+# Prefer a local release copy when there is one (the dev machine), otherwise read
+# GCS over httpfs — the server case, where range requests + partition pruning make
+# this practical without a local copy.
+ctd_full_local <- file.path(dir_releases_local %||% "", version_used,
+                            "parquet/obs_ctd_full")
+ctd_full_src <- if (nzchar(ctd_full_local) && dir.exists(ctd_full_local)) {
+  glue("'{ctd_full_local}/**/*.parquet'")
+} else {
+  glue("'https://storage.googleapis.com/calcofi-db/ducklake/releases/",
+       "{version_used}/parquet/obs_ctd_full/**/*.parquet'")
+}
+dbExecute(con, "INSTALL httpfs; LOAD httpfs;")
+dbExecute(con, glue(
+  "CREATE OR REPLACE VIEW obs_ctd_full AS
+   SELECT * FROM read_parquet({ctd_full_src}, hive_partitioning = true)"))
+cat("obs_ctd_full: view over", if (grepl("^'http", ctd_full_src)) "GCS" else "local release", "\n")
 
 writeLines(version_used, file.path(app_dir, "data", "release_version.txt"))
 dbDisconnect(con, shutdown = TRUE)

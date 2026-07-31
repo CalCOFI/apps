@@ -9,7 +9,7 @@ function(input, output, session) {
   # inherit `con` — a DuckDB handle is not portable across processes — so it opens
   # its own read-only handle and closes it. Everything it needs (db path, rules dir)
   # is passed by value.
-  run_task <- ExtendedTask$new(function(db_path, rules_dir, keys, app_dir) {
+  run_task <- ExtendedTask$new(function(db_path, rules_dir, keys, app_dir, cruise_key) {
     future::future(
       {
         suppressMessages({library(DBI); library(duckdb); library(dplyr)})
@@ -21,17 +21,19 @@ function(input, output, session) {
         rl <- qc_read_rules(rules_dir, active_only = TRUE) |>
           filter(rule_key %in% keys)
         pt <- qc_present_types(cw)
-        res <- qc_run_all(cw, rl, limit = 500L, present_types = pt)
+        sv  <- if (nzchar(cruise_key)) list(cruise_key = cruise_key) else list()
+        res <- qc_run_all(cw, rl, limit = 500L, present_types = pt, scope_values = sv)
         list(results = res, summary = qc_summarize(res, rl))
       },
       seed = TRUE,
-      globals = list(db_path = db_path, rules_dir = rules_dir,
-                     keys = keys, app_dir = app_dir))
+      globals = list(db_path = db_path, rules_dir = rules_dir, keys = keys,
+                     app_dir = app_dir, cruise_key = cruise_key))
   }) |> bind_task_button("run")
 
   observeEvent(input$run, {
     req(length(input$sel_rules) > 0)
-    run_task$invoke(db_file, rules_dir, input$sel_rules, app_dir)
+    run_task$invoke(db_file, rules_dir, input$sel_rules, app_dir,
+                    input$cruise %||% "")
   })
 
   observeEvent(run_task$result(), {
@@ -50,7 +52,8 @@ function(input, output, session) {
     s <- rv$summary
     validate(need(!is.null(s), "Select rules and press Run."))
     s |>
-      select(rule_key, status, n, severity, rule_type, description, elapsed_s, note) |>
+      select(rule_key, status, n, severity, rule_type, any_of("scope"),
+             description, elapsed_s, note) |>
       datatable(
         rownames  = FALSE, selection = "single",
         options   = list(pageLength = 15, scrollX = TRUE, dom = "tip")) |>
@@ -144,8 +147,8 @@ function(input, output, session) {
   output$tbl_rules <- renderDT({
     rules_all |>
       mutate(state = if_else(active, "active", "parked")) |>
-      select(rule_key, state, rule_type, severity, target, description,
-             requires_types, source_query, notes) |>
+      select(rule_key, state, rule_type, severity, target, any_of("scope"),
+             description, requires_types, source_query, notes) |>
       datatable(rownames = FALSE, options = list(pageLength = 20, scrollX = TRUE)) |>
       formatStyle("state",
                   color = styleEqual(c("active", "parked"), c("#1a7f37", "#6c757d")))

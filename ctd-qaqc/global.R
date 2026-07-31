@@ -63,6 +63,13 @@ present_types <- qc_present_types(con)
 
 n_obs <- dbGetQuery(con, "SELECT COUNT(*) n FROM obs")$n
 
+# cruises, newest first — the scope selector for rules that read obs_ctd_full
+cruises <- dbGetQuery(con, "
+  SELECT cruise_key, COUNT(DISTINCT sample_key) AS n_casts
+  FROM sample WHERE sample_type = 'cast' AND cruise_key IS NOT NULL
+  GROUP BY 1 ORDER BY cruise_key DESC")
+n_cruise_scoped <- sum((rules_active$scope %||% "all") == "cruise", na.rm = TRUE)
+
 # a rule whose input is missing is reported as `skip`, never `pass` — surface that
 # at startup too, so the header never implies more coverage than the run has
 n_skip <- sum(vapply(seq_len(nrow(rules_active)), \(i) {
