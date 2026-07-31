@@ -67,8 +67,11 @@ Two things it does deliberately:
   ahead of the release — `valid_min` / `valid_max` exist there now but not in
   `v2026.07.30` — so sourcing them from the release would silently disable every
   range rule.
-- **`qc_review` is preserved across rebuilds.** Losing a reviewer's verdicts to a
-  routine re-prep would be unforgivable.
+- **The review ledger lives in a separate file** (`ctd-qaqc-review.duckdb`), so a
+  rebuild replaces the materialized copy without ever touching a reviewer's work.
+  That split is also required, not just tidy: DuckDB cannot hold a read-only and a
+  read-write handle on one file, so verdicts written into the materialized copy
+  would conflict with the session's read handle or lock out the background workers.
 
 Then:
 
