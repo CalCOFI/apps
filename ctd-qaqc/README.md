@@ -90,15 +90,25 @@ touch /share/github/CalCOFI/apps/ctd-qaqc/restart.txt
 
 ## Status
 
-Active rules cover the sentinel regression guard, referential integrity, missing
-positions, declared value ranges, the quality-code vocabulary, bottle-vs-sensor
-calibration offsets, and density inversions.
+12 active rules: the `-99` sentinel regression guard, referential integrity,
+missing positions, declared value ranges, the quality-code vocabulary,
+bottle-vs-sensor calibration offsets (temperature / salinity / oxygen), density
+inversions, the climatological anomaly, and two bathymetry checks.
+
+Bathymetry deserves a note. CTD casts carry **no reported bottom depth** —
+`bottom_depth` exists in `sample_measurement` for 33,363 bottle casts and for 0
+of 14,336 CTD casts — so `prep_db.R` samples the GEBCO 2025 raster that
+`apps/ctd-viz` already crops and commits. That supports "did this cast measure
+below the seafloor" (a regression guard: a depth unit error or sign flip would
+blow it up) and an adapted form of the Access master's
+`TQ - BottomDepth_Vs_AvgBottomDepth`. The adaptation changes the semantics and the
+rule says so: the original compared the ship's echosounder reading to the station
+average, catching a bad sounder *or* a mispositioned cast; the GEBCO form tests
+position plausibility only.
 
 Parked rules are listed in the Rules tab with the reason they cannot run yet —
-bottom-depth-vs-station and the climatology anomaly need the `ctd-qaqc` reference
-tables (harmonic climatology, station average depths) imported from the CalCOFI
-hydrographic master; spike, pressure monotonicity and up/down disagreement need
-`obs_ctd_full` at full scan resolution.
+spike, pressure monotonicity and up/down disagreement all need `obs_ctd_full` at
+full scan resolution.
 
 Related: `apps/ctd-viz` (profile inspection — findings deep-link into it),
 `CalCOFI/workflows` (the pipeline, the rules, and the plan under `libs/plans/`).

@@ -111,6 +111,35 @@ for (t in ref_tbls) {
 }
 dbExecute(con, "CREATE INDEX IF NOT EXISTS idx_clim ON climatology_harmonic(site_key, measurement_type)")
 
+# -- seafloor depth at each cast position --------------------------------------
+# CTD casts carry NO reported bottom depth: `bottom_depth` exists in
+# sample_measurement for 33,363 BOTTLE casts and for 0 of 14,336 CTD casts. So the
+# only reference available for "is this cast in water this deep" is a bathymetry
+# model. Reuse the GEBCO 2025 raster apps/ctd-viz already crops and commits rather
+# than re-deriving it — same source, one maintainer, and it is only 4 MB.
+#
+# Positive-down depth in metres, land clamped to 0 (see crop_bathy in ctd-viz).
+gebco_tif <- normalizePath(file.path(app_dir, "../ctd-viz/data/gebco_calcofi.tif"),
+                           mustWork = FALSE)
+if (file.exists(gebco_tif)) {
+  librarian::shelf(terra, quiet = TRUE)
+  pos <- dbGetQuery(con, "
+    SELECT sample_key, longitude, latitude FROM sample
+    WHERE sample_type = 'cast' AND longitude IS NOT NULL AND latitude IS NOT NULL")
+  pos$seafloor_depth_m <- terra::extract(
+    terra::rast(gebco_tif), as.matrix(pos[, c("longitude", "latitude")]))[, 1]
+  dbWriteTable(con, "sample_seafloor",
+               pos[, c("sample_key", "seafloor_depth_m")], overwrite = TRUE)
+  cat("sample_seafloor:", nrow(pos), "casts,",
+      sum(!is.na(pos$seafloor_depth_m)), "with a GEBCO depth\n")
+} else {
+  # an absent raster must not look like clean data — leave the table missing so the
+  # two bathymetry rules ERROR visibly rather than returning zero rows
+  cat("WARNING: GEBCO raster not found at", gebco_tif, "\n",
+      "  the seafloor rules will error rather than silently pass.\n",
+      "  fix: run `Rscript prep_db.R` in ../ctd-viz first\n")
+}
+
 dbExecute(con, "CREATE INDEX IF NOT EXISTS idx_obs_sample ON obs(sample_key)")
 dbExecute(con, "CREATE INDEX IF NOT EXISTS idx_obs_type   ON obs(measurement_type)")
 dbExecute(con, "CREATE INDEX IF NOT EXISTS idx_smp_key    ON sample(sample_key)")
