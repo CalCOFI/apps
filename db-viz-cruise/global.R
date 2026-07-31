@@ -42,18 +42,18 @@ dbExecute(con, "INSTALL spatial; LOAD spatial;")
 # so datacheck's pills match calcofi.io/db-schema exactly. fall back to a local set
 # if the sidecar is unreachable. keys are provider_dataset (= obs.dataset).
 dataset_pal_fallback <- c(
-  "calcofi_bottle"             = "#f5cad9",
-  "calcofi_ctd-cast"           = "#e0ccf0",
-  "calcofi_dic"                = "#ffd2bb",
-  "swfsc_ichthyo"              = "#cdebc6",
-  "cce-lter_euphausiids"       = "#d2f0bb",
-  "cce-lter_zoodb"             = "#d9c2f0",
-  "cce-lter_zooscan"           = "#c2e8f0",
-  "pic_zooplankton"            = "#bbe0f0",
-  "swfsc_cufes"                = "#f0e8bb",
-  "calcofi_phyllosoma"         = "#e0bbf0",
-  "calcofi_bird_mammal_census" = "#f0d2e8",
-  "calcofi_phytoplankton"      = "#b5e8b0")
+  "calcofi_bottle"        = "#f5cad9",
+  "calcofi_ctd-cast"      = "#e0ccf0",
+  "calcofi_dic"           = "#ffd2bb",
+  "swfsc_ichthyo"         = "#cdebc6",
+  "cce-lter_euphausiids"  = "#d2f0bb",
+  "cce-lter_zoodb"        = "#d9c2f0",
+  "cce-lter_zooscan"      = "#c2e8f0",
+  "sio_pic-zooplankton"   = "#bbe0f0",
+  "swfsc_cufes"           = "#f0e8bb",
+  "calcofi_phyllosoma"    = "#e0bbf0",
+  "farallon_bird-mammal"  = "#f0d2e8",
+  "calcofi_phytoplankton" = "#b5e8b0")
 
 fetch_dataset_pal <- function() {
   base <- "https://storage.googleapis.com/calcofi-db/ducklake/releases"
@@ -73,18 +73,18 @@ dataset_pal <- fetch_dataset_pal()
 
 # short human labels for datasets (used in the legend + tooltips)
 dataset_label <- c(
-  "calcofi_bottle"             = "Bottle (casts)",
-  "calcofi_ctd-cast"           = "CTD casts",
-  "calcofi_dic"                = "DIC samples",
-  "swfsc_ichthyo"              = "Ichthyoplankton (sites)",
-  "cce-lter_euphausiids"       = "Euphausiids (tows)",
-  "cce-lter_zoodb"             = "ZooDB (tows)",
-  "cce-lter_zooscan"           = "ZooScan (tows)",
-  "pic_zooplankton"            = "Zooplankton (tows)",
-  "swfsc_cufes"                = "CUFES (samples)",
-  "calcofi_phyllosoma"         = "Phyllosoma (tows)",
-  "calcofi_bird_mammal_census" = "Bird/mammal (transects)",
-  "calcofi_phytoplankton"      = "Phytoplankton (regions)")
+  "calcofi_bottle"        = "Bottle (casts)",
+  "calcofi_ctd-cast"      = "CTD casts",
+  "calcofi_dic"           = "DIC samples",
+  "swfsc_ichthyo"         = "Ichthyoplankton (sites)",
+  "cce-lter_euphausiids"  = "Euphausiids (tows)",
+  "cce-lter_zoodb"        = "ZooDB (tows)",
+  "cce-lter_zooscan"      = "ZooScan (tows)",
+  "sio_pic-zooplankton"   = "Zooplankton (tows)",
+  "swfsc_cufes"           = "CUFES (samples)",
+  "calcofi_phyllosoma"    = "Phyllosoma (tows)",
+  "farallon_bird-mammal"  = "Bird/mammal (transects)",
+  "calcofi_phytoplankton" = "Phytoplankton (regions)")
 
 # cruise choices ----
 # built from obs itself (so every cruise that has plottable observations

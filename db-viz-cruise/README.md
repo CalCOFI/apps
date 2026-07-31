@@ -44,9 +44,9 @@ Output: `/share/data/db-viz-cruise/db-viz-cruise.duckdb` on the server, else
 
 Datasets covered (root grain in parens): calcofi_bottle (cast), calcofi_ctd-cast
 (cast), calcofi_dic (bottle), swfsc_ichthyo (site), cce-lter_euphausiids (tow),
-cce-lter_zoodb (tow), cce-lter_zooscan (tow), pic_zooplankton (tow), swfsc_cufes
-(underway), calcofi_phyllosoma (tow), calcofi_bird_mammal_census (transect),
-calcofi_phytoplankton (region_pool). (calcofi_dic and calcofi_bird_mammal_census
+cce-lter_zoodb (tow), cce-lter_zooscan (tow), sio_pic-zooplankton (tow), swfsc_cufes
+(underway), calcofi_phyllosoma (tow), farallon_bird-mammal (transect),
+calcofi_phytoplankton (region_pool). (calcofi_dic and farallon_bird-mammal
 currently carry no `cruise_key` in the release, so they appear in the obs table
 but not under a cruise.)
 
