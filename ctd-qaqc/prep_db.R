@@ -96,6 +96,21 @@ d_mq <- read_csv(wf_path("metadata/measurement_qual.csv"),
 dbWriteTable(con, "measurement_qual", as.data.frame(d_mq), overwrite = TRUE)
 cat("measurement_qual:", nrow(d_mq), "codes\n")
 
+# -- QC reference tables (Phase 5) --------------------------------------------
+# Mined from the CalCOFI hydrographic Access master, committed as small CSVs
+# under metadata/calcofi/hydro-master/reference/. These are the QC engine's
+# reference INPUTS — a climatology to compare against, station bottom depths, the
+# standard-depth grid — and are deliberately NOT part of the release.
+ref_tbls <- c("climatology_harmonic", "station", "standard_depth", "station_class",
+              "mld_sigma", "nutclinedepth")
+for (t in ref_tbls) {
+  d <- read_csv(wf_path(glue("metadata/calcofi/hydro-master/reference/{t}.csv")),
+                show_col_types = FALSE)
+  dbWriteTable(con, t, as.data.frame(d), overwrite = TRUE)
+  cat(sprintf("  %-22s %s rows\n", t, format(nrow(d), big.mark = ",")))
+}
+dbExecute(con, "CREATE INDEX IF NOT EXISTS idx_clim ON climatology_harmonic(site_key, measurement_type)")
+
 dbExecute(con, "CREATE INDEX IF NOT EXISTS idx_obs_sample ON obs(sample_key)")
 dbExecute(con, "CREATE INDEX IF NOT EXISTS idx_obs_type   ON obs(measurement_type)")
 dbExecute(con, "CREATE INDEX IF NOT EXISTS idx_smp_key    ON sample(sample_key)")
