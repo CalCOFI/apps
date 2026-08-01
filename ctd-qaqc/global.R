@@ -192,6 +192,20 @@ order_profile_types <- function(x) {
   c(intersect(PROFILE_TYPE_ORDER, x), sort(setdiff(x, PROFILE_TYPE_ORDER)))
 }
 
+# -- upload --------------------------------------------------------------------
+# Registries the upload path maps through. Both live in the workflows repo so a
+# reviewer can see, in a diff, which sensor became which measurement type.
+d_meas_type <- calcofi4db::read_measurement_type(
+  file.path(dirname(rules_dir), "measurement_type.csv"))
+d_sbe_map <- readr::read_csv(
+  file.path(dirname(rules_dir), "sbe_name_map.csv"), show_col_types = FALSE)
+
+workflows_dir <- normalizePath(file.path(dirname(rules_dir), ".."), mustWork = FALSE)
+gebco_tif <- normalizePath(
+  file.path(app_dir, "../ctd-viz/data/gebco_calcofi.tif"), mustWork = FALSE)
+
+UPLOAD_ACCEPT <- c(".csv", ".cnv", ".asc", ".btl", ".hex")
+
 # deep-link a flagged cast into ctd-viz for the interpolated section view
 ctd_viz_url <- function(sample_key = NULL, cruise_key = NULL) {
   base <- "https://app.calcofi.io/ctd/"

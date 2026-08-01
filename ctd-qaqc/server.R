@@ -10,7 +10,10 @@ function(input, output, session) {
     # chase each other round a loop)
     flag_depth = NA_real_, flag_key = NULL, flag_rule = NULL, sel_scan = NULL,
     # a cast/type requested by a finding, applied once its choices exist
-    want_cast = NULL, want_type = NULL)
+    want_cast = NULL, want_type = NULL,
+    # upload results, kept apart from the release run so the two are
+    # never confused in the UI
+    up_summary = NULL, up_results = NULL)
 
   # -- run rules in the background ---------------------------------------------
   # ExtendedTask so a multi-second scan never freezes the session. The worker CANNOT
@@ -395,6 +398,147 @@ function(input, output, session) {
           "ctd-viz interpolates across stations along a line; this tab is one ",
           "cast at full resolution."))
   })
+
+  # -- upload -------------------------------------------------------------------
+  # The design principle that makes this cheap: every rule targets obs/sample, so
+  # projecting an upload into that shape runs the whole registry unchanged. What
+  # happens here is parsing and mapping — no rule knows the data came from a file.
+
+  upload <- reactive({
+    fi <- input$up_file
+    req(fi)
+    fmt <- tolower(tools::file_ext(fi$name))
+    # fileInput gives the upload a temp name with NO EXTENSION, and the reader
+    # dispatches on the extension — so it is pointed at a copy that keeps the
+    # original name. The copy lives in its own directory so two uploads with the
+    # same name in one session cannot collide, and so a caller that already has
+    # the file at that path is not asked to copy it onto itself.
+    dir_up <- file.path(tempdir(), "ctd-upload", as.integer(Sys.time()))
+    dir.create(dir_up, recursive = TRUE, showWarnings = FALSE)
+    p <- file.path(dir_up, fi$name)
+    if (!normalizePath(fi$datapath, mustWork = FALSE) ==
+        normalizePath(p, mustWork = FALSE))
+      file.copy(fi$datapath, p, overwrite = TRUE)
+
+    d <- try(calcofi4db::read_ctd_upload(p), silent = TRUE)
+    if (inherits(d, "try-error"))
+      return(list(error = trimws(sub("^Error[^:]*:", "", as.character(d)))))
+
+    mapping <- calcofi4db::ctd_map_columns(
+      names(d), d_meas_type, d_sbe_map,
+      format = if (fmt == "csv") "csv" else fmt)
+    core <- try(calcofi4db::ctd_upload_to_core(
+      d, mapping, header = attr(d, "sbe_header") %||% list()), silent = TRUE)
+    if (inherits(core, "try-error"))
+      return(list(error = trimws(sub("^Error[^:]*:", "", as.character(core))),
+                  mapping = mapping, data = d, name = fi$name, format = fmt))
+
+    list(data = d, mapping = mapping, core = core, name = fi$name, format = fmt)
+  })
+
+  output$up_summary <- renderUI({
+    u <- upload()
+    if (!is.null(u$error)) return(div(
+      class = "alert alert-danger py-2 px-3 mb-0",
+      bsicons::bs_icon("exclamation-octagon"), " ", u$error))
+
+    n_map <- sum(u$mapping$role == "measurement" & !is.na(u$mapping$measurement_type))
+    n_un  <- sum(u$mapping$role == "unmapped")
+    tagList(
+      tags$strong(u$name), " ",
+      tags$span(class = "badge text-bg-secondary", toupper(u$format)),
+      tags$ul(
+        class = "mt-2 mb-0",
+        tags$li(glue("{format(nrow(u$data), big.mark = ',')} rows, ",
+                     "{ncol(u$data)} columns")),
+        tags$li(glue("{n_map} column(s) mapped to a measurement type; ",
+                     "{n_un} unmapped")),
+        tags$li(glue("projected to {format(nrow(u$core$obs), big.mark = ',')} ",
+                     "observations across ",
+                     "{length(unique(u$core$obs$measurement_type))} type(s)")),
+        tags$li(HTML(glue(
+          "<b>{u$core$n_sentinel}</b> value(s) dropped as missing or sentinel ",
+          "(<code>-99</code>, <code>-9.99e-29</code>, blank)"))),
+        tags$li(glue("cast {u$core$sample$sample_key}"))))
+  })
+
+  output$up_mapping <- renderDT({
+    u <- upload()
+    validate(need(!is.null(u$mapping), u$error %||% "Choose a file."))
+    u$mapping |>
+      transmute(column, role, measurement_type, units, note) |>
+      datatable(rownames = FALSE,
+                options = list(pageLength = 15, scrollX = TRUE, dom = "tip")) |>
+      formatStyle("role",
+                  color = styleEqual(
+                    c("measurement", "unmapped", "voltage"),
+                    c("#1a7f37", "#d03b3b", "#6e7781"), default = "#6e7781"))
+  })
+
+  up_task <- ExtendedTask$new(function(core, rules_dir, wf_dir, gebco) {
+    future::future({
+      suppressMessages({library(DBI); library(dplyr)})
+      cw <- calcofi4db::qc_upload_con(core, wf_dir, gebco_tif = gebco)
+      on.exit(try(dbDisconnect(cw, shutdown = TRUE), silent = TRUE), add = TRUE)
+      rl  <- calcofi4db::qc_read_rules(rules_dir, active_only = TRUE)
+      pt  <- calcofi4db::qc_present_types(cw, core$sample$dataset_key[1])
+      res <- calcofi4db::qc_run_all(
+        cw, rl, limit = 500L, present_types = pt,
+        scope_values = list(cruise_key = core$sample$cruise_key[1]))
+      list(results = res, summary = calcofi4db::qc_summarize(res, rl))
+    }, seed = TRUE,
+    globals = list(core = core, rules_dir = rules_dir, wf_dir = wf_dir,
+                   gebco = gebco))
+  }) |> bind_task_button("up_run")
+
+  observeEvent(input$up_run, {
+    u <- upload()
+    if (is.null(u$core)) {
+      showNotification(u$error %||% "Choose a file first.", type = "warning")
+      return()
+    }
+    up_task$invoke(u$core, rules_dir, workflows_dir,
+                   if (file.exists(gebco_tif)) gebco_tif else NULL)
+  })
+
+  observeEvent(up_task$result(), {
+    out <- up_task$result()
+    rv$up_summary <- out$summary
+    rv$up_results <- out$results
+    showNotification(glue(
+      "{sum(out$summary$status %in% c('FAIL','flag'))} rule(s) with findings, ",
+      "{sum(out$summary$status == 'skip')} skipped"), type = "message")
+  })
+
+  output$up_summary_tbl <- renderDT({
+    s <- rv$up_summary
+    validate(need(!is.null(s), "Upload a file and press Run."))
+    s |>
+      transmute(rule_key, status, findings = n, severity, type = rule_type,
+                description, sec = elapsed_s, note) |>
+      datatable(rownames = FALSE,
+                options = list(pageLength = 20, scrollX = TRUE, dom = "tip")) |>
+      formatStyle("status",
+                  color = styleEqual(
+                    c("pass", "flag", "FAIL", "ERROR", "skip"),
+                    c("#1a7f37", "#b06000", "#d03b3b", "#d03b3b", "#6e7781")))
+  })
+
+  output$up_dl <- downloadHandler(
+    filename = function() {
+      u <- isolate(upload())
+      glue("ctd-qaqc_upload-findings_{tools::file_path_sans_ext(u$name %||% 'file')}_{Sys.Date()}.csv")
+    },
+    content = function(file) {
+      req(rv$up_results)
+      all <- purrr::map(rv$up_results, \(r) {
+        if (is.null(r$findings) || !nrow(r$findings)) return(NULL)
+        mutate(r$findings, rule_key = r$rule_key, .before = 1)
+      }) |> purrr::compact()
+      readr::write_csv(
+        if (length(all)) bind_rows(all) else tibble(rule_key = character()),
+        file, na = "")
+    })
 
   # -- record a verdict ---------------------------------------------------------
   observeEvent(input$save_verdict, {

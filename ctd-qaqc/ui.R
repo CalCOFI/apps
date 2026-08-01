@@ -130,6 +130,58 @@ function(request) {
             DTOutput("tbl_profile")))),
 
       nav_panel(
+        "Upload", icon = bsicons::bs_icon("upload"),
+        layout_sidebar(
+          sidebar = sidebar(
+            width = 330, position = "right", open = "open",
+            fileInput("up_file", "CTD file",
+                      accept = UPLOAD_ACCEPT, buttonLabel = "Browse…"),
+            helpText(
+              HTML(paste0(
+                "<b>.csv</b> CalCOFI cast file · <b>.cnv</b> Sea-Bird converted ",
+                "(preferred — its header names every column) · <b>.asc</b> / ",
+                "<b>.btl</b> Sea-Bird ASCII and bottle summary."))),
+            div(class = "small text-muted",
+                bsicons::bs_icon("info-circle"), " ",
+                HTML(paste0(
+                  "<b>.hex is not accepted.</b> It is raw A/D counts; converting ",
+                  "it needs the instrument configuration (.xmlcon) with the ",
+                  "calibration coefficients. Run SBE Data Processing and upload ",
+                  "the .cnv."))),
+            hr(),
+            input_task_button("up_run", "Run all rules on this file",
+                              icon = bsicons::bs_icon("play-fill")),
+            hr(),
+            div(class = "small text-muted",
+                "Nothing here touches the release. The file is projected into ",
+                tags$code("obs"), " / ", tags$code("sample"), " in an in-memory ",
+                "database that dies with this session.")),
+          card(
+            card_header("File"),
+            uiOutput("up_summary")),
+          card(
+            card_header("Column mapping"),
+            p(class = "text-muted small px-3 mb-1",
+              HTML(paste0(
+                "Every column, and what it became. <b>Unmapped columns are the ",
+                "point of this table</b> — a renamed sensor or a new instrument ",
+                "shows up here first. Raw voltages are unmapped deliberately: ",
+                "which sensor a <code>V0</code> belongs to depends on the wiring."))),
+            DTOutput("up_mapping")),
+          card(
+            card_header("Rule results"),
+            p(class = "text-muted small px-3 mb-1",
+              HTML(paste0(
+                "The same registry the release is checked with, run unchanged — ",
+                "every rule targets <code>obs</code>/<code>sample</code>, so ",
+                "projecting the upload into that shape is all it takes. A rule ",
+                "whose input this file does not carry reports <b>skip</b>, ",
+                "never pass."))),
+            DTOutput("up_summary_tbl"),
+            downloadButton("up_dl", "Download findings (CSV)",
+                           class = "btn-sm mt-2")))),
+
+      nav_panel(
         "Review log", icon = bsicons::bs_icon("journal-text"),
         card(card_header("Recorded verdicts"), DTOutput("tbl_review"))),
 
