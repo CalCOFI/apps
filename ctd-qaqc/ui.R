@@ -77,7 +77,57 @@ function(request) {
           div(
             actionButton("save_verdict", "Record verdict",
                          class = "btn-primary", icon = bsicons::bs_icon("check2")),
+            # a finding is a key and a number; the profile is where a reviewer can
+            # actually judge it, so getting there is one click from the row
+            actionButton("go_profile", "See it in the profile",
+                         class = "btn-outline-secondary ms-2",
+                         icon = bsicons::bs_icon("graph-up")),
             uiOutput("verdict_msg", inline = TRUE)))),
+
+      nav_panel(
+        "Profile", icon = bsicons::bs_icon("graph-up"),
+        layout_sidebar(
+          sidebar = sidebar(
+            width = 300, position = "right", open = "open",
+            # independently addressable, so a flagged cast is a shareable link
+            # rather than something you can only reach by re-running a rule
+            selectInput("prof_cruise", "Cruise",
+                        choices  = setNames(cruises$cruise_key, paste0(
+                          cruises$cruise_key, "  (", cruises$n_casts, " casts)")),
+                        selected = cruises$cruise_key[1]),
+            selectInput("prof_cast", "Cast", choices = NULL),
+            selectInput("prof_type", "Measurement", choices = NULL),
+            checkboxInput("prof_show_up", "Overlay the upcast", TRUE),
+            helpText(
+              "Full-resolution scans from ", tags$code("obs_ctd_full"),
+              " — the thinned ", tags$code("obs"), " keeps one direction and ",
+              "roughly one sample per 10 m, so neither the up/down difference nor ",
+              "a single-scan spike is visible there."),
+            uiOutput("prof_links")),
+          # each output gets its OWN card rather than sharing one. bslib cards are
+          # fill containers: a plotlyOutput with a fixed pixel height inside a
+          # shared card collapses to zero, which renders as a blank panel with no
+          # error anywhere — the card is what should carry the height.
+          layout_columns(
+            col_widths = c(7, 5),
+            card(
+              full_screen = TRUE, height = 540,
+              card_header(uiOutput("profile_header")),
+              plotlyOutput("plot_profile")),
+            card(
+              full_screen = TRUE, height = 540,
+              card_header("Cruise context"),
+              maplibreOutput("map_cast"),
+              card_footer(
+                class = "small text-muted",
+                "Casts on this cruise; the selected one is ringed. Click one to ",
+                "switch to it."))),
+          card(
+            card_header("Scans"),
+            p(class = "text-muted small px-3 mb-1",
+              "Click a scan in the plot to select it in the table, or a table row ",
+              "to highlight it in the plot. A flagged scan is ringed in red."),
+            DTOutput("tbl_profile")))),
 
       nav_panel(
         "Review log", icon = bsicons::bs_icon("journal-text"),

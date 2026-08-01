@@ -9,7 +9,8 @@
 # packages ----
 librarian::shelf(
   bslib, bsicons, DBI, dplyr, DT, duckdb, future, glue, htmltools,
-  promises, purrr, readr, shiny, stringr, tibble,
+  plotly, promises, purrr, readr, sf, shiny, stringr, tibble,
+  bbest / mapgl,
   quiet = T)
 
 # background execution: rules are multi-second scans, and a QA run should never
@@ -129,9 +130,71 @@ qc_read_verdicts <- function() {
     FROM qc_review ORDER BY reviewed_at DESC")
 }
 
-# deep-link a flagged cast into ctd-viz rather than rebuilding profile plots here
-ctd_viz_url <- function(sample_key, cruise_key = NULL) {
+# -- profiles ------------------------------------------------------------------
+# A finding is a key and a number; a reviewer cannot judge one without seeing the
+# value in the profile it came from. The fetch itself lives in calcofi4db
+# (qc_cast_profile), with tests, because it carries two traps: the direction
+# suffix must be stripped without eating the `d` in `calcofi_ctd-cast`, and
+# obs_ctd_full must be pruned to its cruise partition or a single profile scans
+# 212M rows.
+#
+# ctd-viz answers a DIFFERENT question and is linked to rather than duplicated: it
+# interpolates ACROSS stations to draw a section. This is one cast, at full
+# resolution, with both directions overlaid — which is the view a QC reviewer
+# needs and which nothing in the org had.
+
+#' Casts on one cruise, for the cast selector and the map
+qc_cruise_casts <- function(cruise_key) {
+  if (!nzchar(cruise_key %||% "")) return(tibble())
+  dbGetQuery(con, "
+    SELECT sample_key, cruise_key, site_key, grid_key, longitude, latitude,
+           datetime, order_occ
+    FROM sample WHERE cruise_key = ? ORDER BY sample_key",
+    params = list(cruise_key)) |> as_tibble()
+}
+
+#' "(down)" / "(up)" for a cast key, for use in a selector label
+qc_dir_label <- function(sample_key) {
+  d <- calcofi4db::qc_cast_direction(sample_key)
+  ifelse(is.na(d), "", paste0("(", d, ")"))
+}
+
+#' The measurement types a given cast actually recorded
+#'
+#' Populated from the cast, not from the registry: offering a reviewer a type that
+#' this cast never measured produces an empty plot with no explanation.
+qc_cast_types <- function(sample_key) {
+  if (!nzchar(sample_key %||% "")) return(character(0))
+  base <- calcofi4db::qc_cast_base(sample_key)
+  ck <- dbGetQuery(con, "SELECT cruise_key FROM sample WHERE sample_key = ?",
+                   params = list(sample_key))$cruise_key
+  if (!length(ck)) return(character(0))
+  dbGetQuery(con, glue(
+    "SELECT DISTINCT measurement_type FROM obs_ctd_full
+     WHERE cruise_key = ? AND sample_key LIKE ?
+     ORDER BY 1"),
+    params = list(ck[1], paste0(base, "%")))$measurement_type
+}
+
+# down and up are the whole point of the overlay, so they get fixed colours rather
+# than plotly's defaults — a reviewer comparing two casts should not have to check
+# the legend to know which is which
+DIR_COLOR <- c(down = "#1f77b4", up = "#e07b39")
+
+# the canonical profile variables first, then everything else alphabetically —
+# a reviewer opening a cast almost always wants temperature or salinity
+PROFILE_TYPE_ORDER <- c(
+  "temperature_ave", "salinity_ave_corr", "sigma_theta_1",
+  "oxygen_ml_l_ave_sta_corr", "oxygen_umol_kg_ave_sta_corr", "fluorescence_v",
+  "ph", "par", "pressure")
+
+order_profile_types <- function(x) {
+  c(intersect(PROFILE_TYPE_ORDER, x), sort(setdiff(x, PROFILE_TYPE_ORDER)))
+}
+
+# deep-link a flagged cast into ctd-viz for the interpolated section view
+ctd_viz_url <- function(sample_key = NULL, cruise_key = NULL) {
   base <- "https://app.calcofi.io/ctd/"
-  if (is.null(cruise_key) || is.na(cruise_key)) return(base)
+  if (is.null(cruise_key) || is.na(cruise_key) || !nzchar(cruise_key)) return(base)
   paste0(base, "?cruise=", utils::URLencode(as.character(cruise_key), reserved = TRUE))
 }
