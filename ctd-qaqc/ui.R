@@ -202,11 +202,25 @@ function(request) {
           p(class = "text-muted small px-3",
             HTML(paste0(
               "For what each rule means — the reasoning, the threshold and how it ",
-              "was derived, the known limitations, and how this compares with ",
-              "QARTOD and <code>oce</code> — see the ",
+              "was derived, the known limitations, what the source documentation ",
+              "says about the corrections behind these values, and how this ",
+              "compares with QARTOD and <code>oce</code> — see the ",
               "<a href='https://calcofi.io/workflows/qc_protocol.html' ",
               "target='_blank' rel='noopener'>QA/QC protocol</a>, which is ",
               "generated from this registry."))),
+          # the quality codes are the single most misreadable thing in this data,
+          # and the app is where someone looks at a flag
+          div(class = "alert alert-info py-2 px-3 mx-3 small",
+              HTML(paste0(
+                "<b>Quality codes are dataset-scoped.</b> The CTD files use ",
+                "<code>0</code>/blank = good, <code>1</code> = use the primary ",
+                "sensor, <code>2</code> = use the secondary, <code>8</code> = ",
+                "questionable, <code>9</code> = bad <i>or</i> missing. ",
+                "<code>1</code> and <code>2</code> are sensor-<i>selection</i> ",
+                "instructions, not quality grades — and because <code>9</code> ",
+                "covers \"bad\", a 9-flagged row that carries a number is bad data, ",
+                "not a contradiction. The bottle database uses a different set ",
+                "(including <code>6</code>, which has no CTD meaning)."))),
           DTOutput("tbl_rules"))))
   )
 }
