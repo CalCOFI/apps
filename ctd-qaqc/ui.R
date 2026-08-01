@@ -93,6 +93,18 @@ function(request) {
               "<code>metadata/qc_rules/</code> so they version with the pipeline ",
               "that produces the data they check. Parked rules are listed with the ",
               "reason they cannot run yet."))),
+          # the protocol is GENERATED from this same registry, so the link cannot
+          # go stale the way a hand-written help page would: what a rule checks,
+          # where its threshold came from and what it cannot see are all harvested
+          # from the rule's own SQL header at render time
+          p(class = "text-muted small px-3",
+            HTML(paste0(
+              "For what each rule means — the reasoning, the threshold and how it ",
+              "was derived, the known limitations, and how this compares with ",
+              "QARTOD and <code>oce</code> — see the ",
+              "<a href='https://calcofi.io/workflows/qc_protocol.html' ",
+              "target='_blank' rel='noopener'>QA/QC protocol</a>, which is ",
+              "generated from this registry."))),
           DTOutput("tbl_rules"))))
   )
 }
