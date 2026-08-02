@@ -198,6 +198,52 @@ qc_cast_types <- function(sample_key) {
     params = list(ck[1], paste0(base, "%")))$measurement_type
 }
 
+#' Per-cast min/max for every type the cast recorded — REVIEW CONTEXT, NOT A CHECK
+#'
+#' Every source cruise ships `YYMM_span_###-###.csv`, which is the per-cast min
+#' and max of every variable **as recorded by the processor**. This is not that
+#' file. Recomputing the span from our own `obs_ctd_full` is circular: a corrupted
+#' value simply widens the span we compute, so it can never disagree with itself
+#' and validates nothing. The real cross-check — released value outside the span
+#' its own processor recorded — is the parked rule `ctd_value_outside_cast_span`,
+#' and it stays parked until those files are ingested (question
+#' `calcofi_ctd-cast_15`).
+#'
+#' What it IS good for is orientation: a reviewer landing on a flagged cast can
+#' see the whole cast at a glance, and `valid_min`/`valid_max` from the registry
+#' alongside says whether anything left the declared range without having to open
+#' each variable in turn.
+#'
+#' Full resolution (`obs_ctd_full`), both directions, because a span over the
+#' thinned series would understate the extremes the thinning dropped.
+qc_cast_span <- function(sample_key) {
+  if (!nzchar(sample_key %||% "")) return(tibble())
+  base <- calcofi4db::qc_cast_base(sample_key)
+  ck <- dbGetQuery(con, "SELECT cruise_key FROM sample WHERE sample_key = ?",
+                   params = list(sample_key))$cruise_key
+  if (!length(ck)) return(tibble())
+  dbGetQuery(con, "
+    SELECT o.measurement_type,
+           COUNT(*)                    AS n_scan,
+           MIN(o.measurement_value)    AS v_min,
+           MAX(o.measurement_value)    AS v_max,
+           MIN(o.depth_min_m)          AS depth_min,
+           MAX(o.depth_min_m)          AS depth_max,
+           ANY_VALUE(mt.units)         AS units,
+           ANY_VALUE(mt.valid_min)     AS valid_min,
+           ANY_VALUE(mt.valid_max)     AS valid_max
+    FROM obs_ctd_full o
+    LEFT JOIN measurement_type mt USING (measurement_type)
+    WHERE o.cruise_key = ? AND o.sample_key LIKE ?
+      AND o.measurement_value IS NOT NULL
+    GROUP BY 1 ORDER BY 1",
+    params = list(ck[1], paste0(base, "%"))) |>
+    as_tibble() |>
+    # the only judgement this panel makes, and it is the registry's, not ours
+    mutate(outside_range = (!is.na(valid_min) & v_min < valid_min) |
+                           (!is.na(valid_max) & v_max > valid_max))
+}
+
 # down and up are the whole point of the overlay, so they get fixed colours rather
 # than plotly's defaults — a reviewer comparing two casts should not have to check
 # the legend to know which is which

@@ -336,6 +336,33 @@ function(input, output, session) {
       event_register("plotly_click")
   })
 
+  # the whole cast at a glance, so a reviewer who has just landed on one flagged
+  # variable can see whether anything else left its declared range too. Keyed on
+  # the cast alone — it deliberately does NOT react to prof_type.
+  output$tbl_span <- renderDT({
+    req(input$prof_cast)
+    d <- qc_cast_span(input$prof_cast)
+    validate(need(nrow(d) > 0, "No scans for this cast."))
+    d |>
+      transmute(measurement_type, units,
+                scans      = n_scan,
+                min        = signif(v_min, 6),
+                max        = signif(v_max, 6),
+                valid_min, valid_max,
+                `depth (m)` = paste0(round(depth_min), "–", round(depth_max)),
+                outside_range) |>
+      datatable(rownames = FALSE, selection = "none",
+                options = list(pageLength = 8, scrollX = TRUE, dom = "tip",
+                               columnDefs = list(list(visible = FALSE,
+                                                      targets = 8)))) |>
+      # colour the VALUES, not a flag column: the reviewer's eye is already on
+      # min/max, and a separate TRUE/FALSE column reads as a verdict this panel
+      # is not entitled to make
+      formatStyle(c("min", "max"), valueColumns = "outside_range",
+                  color = styleEqual(c(TRUE, FALSE), c("#d03b3b", "inherit")),
+                  fontWeight = styleEqual(c(TRUE, FALSE), c("bold", "normal")))
+  }, server = FALSE)
+
   output$tbl_profile <- renderDT({
     d <- profile()
     validate(need(nrow(d) > 0, "No scans for this cast and measurement."))
