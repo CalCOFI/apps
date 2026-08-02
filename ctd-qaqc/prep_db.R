@@ -77,6 +77,16 @@ if (file.exists(db_file) && !isTRUE(force_pull)) {
 # -- pull the CTD slice of the release ----------------------------------------
 con_rel <- cc_get_db(version = db_version)
 version_used <- tryCatch(cc_db_version(con_rel), error = function(e) db_version)
+# cc_db_version() can error, and the old fallback then handed back the literal
+# argument — so version_used became the STRING "latest" and every path built from
+# it pointed at releases/latest/… , which does not exist. Resolve it for real.
+if (!grepl("^v[0-9]{4}\\.[0-9]{2}", version_used %||% "")) {
+  version_used <- trimws(readLines(
+    "https://storage.googleapis.com/calcofi-db/ducklake/releases/latest.txt",
+    warn = FALSE)[1])
+}
+stopifnot("could not resolve a release version" =
+            grepl("^v[0-9]{4}\\.[0-9]{2}", version_used))
 cat("release:", version_used, "\n")
 
 con <- dbConnect(duckdb::duckdb(dbdir = db_file, read_only = FALSE))
