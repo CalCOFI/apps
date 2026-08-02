@@ -32,7 +32,7 @@
 #                  that are always run one cruise at a time. See below.
 
 devtools::load_all("../../calcofi4r")
-librarian::shelf(DBI, duckdb, fs, glue, readr, quiet = TRUE)
+librarian::shelf(DBI, duckdb, fs, glue, jsonlite, readr, quiet = TRUE)
 
 options(timeout = max(1800, getOption("timeout", 60)))
 
@@ -170,8 +170,35 @@ ctd_full_local <- file.path(dir_releases_local %||% "", version_used,
 ctd_full_src <- if (nzchar(ctd_full_local) && dir.exists(ctd_full_local)) {
   glue("'{ctd_full_local}/**/*.parquet'")
 } else {
-  glue("'https://storage.googleapis.com/calcofi-db/ducklake/releases/",
-       "{version_used}/parquet/obs_ctd_full/**/*.parquet'")
+  # The GCS branch CANNOT use a glob. This was written as
+  # '…/obs_ctd_full/**/*.parquet' and had never been exercised, because
+  # ctd-qaqc had never been deployed to a server — a local release copy always
+  # won. On the server it fails twice over: DuckDB first refuses `*` in a
+  # generic HTTP path ("Consider SET allow_asterisks_in_http_paths = true"), and
+  # with that set it then GETs the literal `**` path and takes a 404, because
+  # plain HTTPS has no directory listing to expand a glob against.
+  #
+  # So enumerate the partitions instead, via the GCS JSON list API — which is
+  # public for this bucket and needs no credentials — and hand DuckDB an
+  # explicit file list. Partition pruning is preserved: each path still carries
+  # its `cruise_key=…` segment, so hive_partitioning reads it exactly as it
+  # would from a glob.
+  api <- paste0("https://storage.googleapis.com/storage/v1/b/calcofi-db/o",
+                "?prefix=ducklake/releases/", version_used,
+                "/parquet/obs_ctd_full/&fields=items(name),nextPageToken")
+  objs <- character(); token <- NULL
+  repeat {
+    u <- if (is.null(token)) api else paste0(api, "&pageToken=", token)
+    j <- jsonlite::fromJSON(u)
+    objs  <- c(objs, j$items$name)
+    token <- j$nextPageToken
+    if (is.null(token)) break
+  }
+  objs <- grep("\\.parquet$", objs, value = TRUE)
+  stopifnot("no obs_ctd_full partitions found on GCS" = length(objs) > 0)
+  cat("  enumerated", length(objs), "obs_ctd_full partitions from GCS\n")
+  paste0("[", paste0("'https://storage.googleapis.com/calcofi-db/", objs, "'",
+                     collapse = ", "), "]")
 }
 dbExecute(con, "INSTALL httpfs; LOAD httpfs;")
 dbExecute(con, glue(
