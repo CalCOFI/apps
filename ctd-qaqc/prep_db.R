@@ -214,8 +214,10 @@ dbExecute(con, "INSTALL httpfs; LOAD httpfs;")
 dbExecute(con, glue(
   "CREATE OR REPLACE VIEW obs_ctd_full AS
    SELECT * FROM read_parquet({ctd_full_src}, hive_partitioning = true)"))
-cat("obs_ctd_full: view over", if (grepl("^'http", ctd_full_src)) "GCS" else "local release", "\n")
+cat("obs_ctd_full: view over",
+    if (grepl("storage.googleapis.com", ctd_full_src)) "GCS" else "local release", "\n")
 
+dir_create(file.path(app_dir, "data"))
 writeLines(version_used, file.path(app_dir, "data", "release_version.txt"))
 dbDisconnect(con, shutdown = TRUE)
 cat("\ndone ->", db_file, "\n")
