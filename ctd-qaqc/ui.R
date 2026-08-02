@@ -205,7 +205,7 @@ function(request) {
               "was derived, the known limitations, what the source documentation ",
               "says about the corrections behind these values, and how this ",
               "compares with QARTOD and <code>oce</code> — see the ",
-              "<a href='https://calcofi.io/workflows/qc_protocol.html' ",
+              "<a href='https://calcofi.io/workflows/ctd-cast_qa-qc-protocol.html' ",
               "target='_blank' rel='noopener'>QA/QC protocol</a>, which is ",
               "generated from this registry."))),
           # the quality codes are the single most misreadable thing in this data,

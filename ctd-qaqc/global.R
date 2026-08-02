@@ -143,14 +143,36 @@ qc_read_verdicts <- function() {
 # resolution, with both directions overlaid — which is the view a QC reviewer
 # needs and which nothing in the org had.
 
+# `sample.data_stage` (final | preliminary) arrived with the v2026.08 release.
+# The app is deployed independently of the release it reads, so ask the catalog
+# rather than assume: against an older DB the column is simply absent and every
+# cast reads NA, which renders as no badge — not as a broken Profile tab.
+HAS_DATA_STAGE <- "data_stage" %in% dbGetQuery(con,
+  "SELECT column_name FROM information_schema.columns
+   WHERE table_name = 'sample'")$column_name
+
 #' Casts on one cruise, for the cast selector and the map
 qc_cruise_casts <- function(cruise_key) {
   if (!nzchar(cruise_key %||% "")) return(tibble())
-  dbGetQuery(con, "
+  stage_col <- if (HAS_DATA_STAGE) "data_stage" else "NULL::VARCHAR AS data_stage"
+  dbGetQuery(con, glue("
     SELECT sample_key, cruise_key, site_key, grid_key, longitude, latitude,
-           datetime, order_occ
-    FROM sample WHERE cruise_key = ? ORDER BY sample_key",
+           datetime, order_occ, {stage_col}
+    FROM sample WHERE cruise_key = ? ORDER BY sample_key"),
     params = list(cruise_key)) |> as_tibble()
+}
+
+#' `final` / `preliminary` for one cast, or NA where the release cannot say
+#'
+#' The source is explicit that preliminary data are "for non-publication use" and
+#' that oxygen, nitrate and chlorophyll may move significantly after post-cruise
+#' calibration — which is exactly the context a reviewer needs before calling a
+#' value a defect.
+qc_cast_stage <- function(sample_key) {
+  if (!HAS_DATA_STAGE || !nzchar(sample_key %||% "")) return(NA_character_)
+  d <- dbGetQuery(con, "SELECT data_stage FROM sample WHERE sample_key = ?",
+                  params = list(sample_key))$data_stage
+  if (length(d)) d[1] else NA_character_
 }
 
 #' "(down)" / "(up)" for a cast key, for use in a selector label

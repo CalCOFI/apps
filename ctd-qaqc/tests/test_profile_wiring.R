@@ -101,6 +101,21 @@ testServer(shinyAppDir(app_dir), {
     "a new cast clears the selected scan" = is.null(rv$sel_scan),
     "a new cast clears the flag"          = is.na(rv$flag_depth))
   ok("a new cast clears the selection and the flag (no stale red ring)")
+
+  # -- data_stage degrades, it does not break ----------------------------------
+  # The app is deployed independently of the release it reads. `sample.data_stage`
+  # arrived with v2026.08; against an older DB the column is absent and the badge
+  # must simply not render. A hard `SELECT data_stage` here would take the whole
+  # Profile tab down on a pre-v2026.08 database.
+  stg <- qc_cast_stage(CAST2)
+  stopifnot(
+    "data_stage is final, preliminary, or absent" =
+      is.na(stg) || stg %in% c("final", "preliminary"),
+    "qc_cruise_casts always yields the column, even when the DB lacks it" =
+      "data_stage" %in% names(qc_cruise_casts(CRUISE)))
+  ok(sprintf("data_stage on this release: %s",
+             if (HAS_DATA_STAGE) sprintf("present (%s)", stg %||% "NA") else
+               "absent — badge suppressed, no error"))
 })
 
 cat("\nprofile wiring: all assertions passed\n")

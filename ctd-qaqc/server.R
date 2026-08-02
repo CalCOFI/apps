@@ -228,13 +228,26 @@ function(input, output, session) {
   output$profile_header <- renderUI({
     d <- profile()
     if (!nrow(d)) return("Profile")
-    ndir <- n_distinct(d$cast_dir)
+    ndir  <- n_distinct(d$cast_dir)
+    # a preliminary cast is not a defective one: the source warns that oxygen,
+    # nitrate and chlorophyll may move significantly after post-cruise
+    # calibration, so a reviewer must see this before calling a value wrong
+    stage <- qc_cast_stage(input$prof_cast)
     tagList(
       tags$strong(input$prof_type), " — ",
       tags$span(class = "text-muted", glue(
         "{nrow(d)} scans, {ndir} direction(s), ",
         "{round(min(d$depth_m, na.rm = TRUE))}–",
         "{round(max(d$depth_m, na.rm = TRUE))} m")),
+      if (isTRUE(stage == "preliminary")) tags$span(
+        class = "badge text-bg-warning ms-2",
+        title = paste("Preliminary data, for non-publication use: oxygen,",
+                      "nitrate and chlorophyll may change significantly after",
+                      "post-cruise calibration."),
+        "preliminary"),
+      if (isTRUE(stage == "final")) tags$span(
+        class = "badge text-bg-secondary ms-2",
+        title = "Post-cruise calibrations applied (FinalQC).", "final"),
       if (!is.na(rv$flag_depth)) tags$span(
         class = "badge text-bg-danger ms-2",
         glue("flagged at {round(rv$flag_depth, 1)} m by {rv$flag_rule}")))
