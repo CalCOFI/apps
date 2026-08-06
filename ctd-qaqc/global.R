@@ -143,13 +143,45 @@ qc_read_verdicts <- function() {
 # resolution, with both directions overlaid — which is the view a QC reviewer
 # needs and which nothing in the org had.
 
-# `sample.data_stage` (final | preliminary) arrived with the v2026.08 release.
-# The app is deployed independently of the release it reads, so ask the catalog
-# rather than assume: against an older DB the column is simply absent and every
-# cast reads NA, which renders as no badge — not as a broken Profile tab.
+# `sample.data_stage` arrived with the v2026.08 release. The app is deployed
+# independently of the release it reads, so ask the catalog rather than assume:
+# against an older DB the column is simply absent and every cast reads NA, which
+# renders as no badge — not as a broken Profile tab.
 HAS_DATA_STAGE <- "data_stage" %in% dbGetQuery(con,
   "SELECT column_name FROM information_schema.columns
    WHERE table_name = 'sample'")$column_name
+
+# The vocabulary went from two values to THREE in the 2026-08-06 ingest, matching
+# calcofi.org's own published progression. Declared as data rather than as
+# `if (stage == "…")` branches, because the first version of this badge tested
+# `stage == "preliminary"` — which after the split matches nothing at all, so the
+# warning would have silently stopped rendering on precisely the casts that need
+# it. Every label here is DISTINCT for the same reason: two tiers both reading
+# "preliminary" tells a reviewer nothing about which one they are looking at.
+#
+# The bare `preliminary` of the old two-value vocabulary is deliberately NOT here.
+# It predates knowing that there are two preliminary tiers, so it cannot say which
+# one a cast is — and the whole point of the split is that the difference matters.
+# Consequence, accepted knowingly: against a release older than the split
+# (v2026.08.06 still carries `preliminary` on 2,981 casts across 20 cruises) the
+# Profile tab errors instead of badging. That is the intended behaviour — it says
+# "this release predates the split" loudly, where rendering nothing would have let
+# a reviewer read an un-badged preliminary cast as final.
+CTD_STAGE_BADGE <- list(
+  final = list(
+    label = "final", class = "text-bg-secondary",
+    title = "Post-cruise calibrations applied (FinalQC)."),
+  preliminary_with_bottle = list(
+    label = "preliminary — with bottle", class = "text-bg-warning",
+    title = paste("Preliminary (CTD & bottle 1m-binned), for non-publication use:",
+                  "the bottle merge has run, but oxygen, nitrate and chlorophyll",
+                  "may still change significantly after post-cruise calibration.")),
+  preliminary_without_bottle = list(
+    label = "preliminary — without bottle", class = "text-bg-warning",
+    title = paste("Preliminary (CTD 1m-binned), for non-publication use. The bottle",
+                  "merge has NOT run for this cruise, so bottle-corrected salinity,",
+                  "oxygen and chlorophyll do not exist for it — any such series",
+                  "shown is the uncorrected sensor value.")))
 
 #' Casts on one cruise, for the cast selector and the map
 qc_cruise_casts <- function(cruise_key) {
@@ -162,12 +194,12 @@ qc_cruise_casts <- function(cruise_key) {
     params = list(cruise_key)) |> as_tibble()
 }
 
-#' `final` / `preliminary` for one cast, or NA where the release cannot say
+#' Processing stage for one cast, or NA where the release cannot say
 #'
-#' The source is explicit that preliminary data are "for non-publication use" and
-#' that oxygen, nitrate and chlorophyll may move significantly after post-cruise
-#' calibration — which is exactly the context a reviewer needs before calling a
-#' value a defect.
+#' One of `names(CTD_STAGE_BADGE)`. The source is explicit that preliminary data
+#' are "for non-publication use" and that oxygen, nitrate and chlorophyll may move
+#' significantly after post-cruise calibration — which is exactly the context a
+#' reviewer needs before calling a value a defect.
 qc_cast_stage <- function(sample_key) {
   if (!HAS_DATA_STAGE || !nzchar(sample_key %||% "")) return(NA_character_)
   d <- dbGetQuery(con, "SELECT data_stage FROM sample WHERE sample_key = ?",

@@ -239,15 +239,25 @@ function(input, output, session) {
         "{nrow(d)} scans, {ndir} direction(s), ",
         "{round(min(d$depth_m, na.rm = TRUE))}–",
         "{round(max(d$depth_m, na.rm = TRUE))} m")),
-      if (isTRUE(stage == "preliminary")) tags$span(
-        class = "badge text-bg-warning ms-2",
-        title = paste("Preliminary data, for non-publication use: oxygen,",
-                      "nitrate and chlorophyll may change significantly after",
-                      "post-cruise calibration."),
-        "preliminary"),
-      if (isTRUE(stage == "final")) tags$span(
-        class = "badge text-bg-secondary ms-2",
-        title = "Post-cruise calibrations applied (FinalQC).", "final"),
+      # looked up rather than branched on, so a new stage value badges instead of
+      # silently rendering nothing — see CTD_STAGE_BADGE in global.R
+      local({
+        # NA is the normal, expected case on a release older than v2026.08, where
+        # the column does not exist at all — no badge, no error.
+        if (length(stage) != 1 || is.na(stage)) return(NULL)
+        b <- CTD_STAGE_BADGE[[stage]]
+        # A stage the map does not know is a DIFFERENT situation, and it fails
+        # loudly. Rendering nothing would be indistinguishable from "final" to a
+        # reviewer, which is the one reading this badge exists to prevent. The
+        # most likely cause is a release still on the pre-split `preliminary`.
+        if (is.null(b)) stop(glue(
+          "unknown sample.data_stage '{stage}' — this app expects the three-tier ",
+          "vocabulary ({paste(names(CTD_STAGE_BADGE), collapse = ', ')}). A ",
+          "release older than the 2026-08-06 split carries the un-differentiated ",
+          "'preliminary', which cannot say whether the bottle merge has run; ",
+          "re-prep against a newer release (Rscript prep_db.R)."))
+        tags$span(class = paste("badge ms-2", b$class), title = b$title, b$label)
+      }),
       if (!is.na(rv$flag_depth)) tags$span(
         class = "badge text-bg-danger ms-2",
         glue("flagged at {round(rv$flag_depth, 1)} m by {rv$flag_rule}")))
