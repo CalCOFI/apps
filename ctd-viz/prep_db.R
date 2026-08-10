@@ -16,6 +16,14 @@
 # data/gebco_calcofi.tif (positive-down depth, m; land clamped to 0). this is
 # an app-side stopgap — bathymetry should become a first-class released
 # layer: see CalCOFI/workflows#54.
+#
+# THIS CROP IS ALSO PUBLISHED, at gs://calcofi-db/bathymetry/gebco_2025_calcofi.tif,
+# which is what calcofi4r::cc_bathy() serves to every other consumer. If a re-crop
+# here changes the extent or the source grid, push the new file up too:
+#   gcloud storage cp data/gebco_calcofi.tif \
+#     gs://calcofi-db/bathymetry/gebco_2025_calcofi.tif
+# otherwise ctd-viz and ctd-transects draw seafloors from two different rasters,
+# which is the exact drift moving the sampling into calcofi4r was meant to end.
 
 # run from app dir: `cd apps/ctd-viz && Rscript prep_db.R`
 devtools::load_all("../../calcofi4r")

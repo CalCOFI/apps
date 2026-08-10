@@ -34,6 +34,15 @@ stopifnot(
   "bathymetry raster not found; run `Rscript prep_db.R` first" =
     file.exists(bathy_tif))
 
+# the transect seafloor is sampled by calcofi4r (cc_bathy / cc_transect_bathy),
+# so a server left on an older build would fail deep inside a plot render with
+# "could not find function" rather than here
+if (packageVersion("calcofi4r") < "1.6.0")
+  stop(
+    "calcofi4r ", packageVersion("calcofi4r"), " is too old for the transect ",
+    "seafloor (needs >= 1.6.0). Update with:\n",
+    "  remotes::install_github('calcofi/calcofi4r')")
+
 # database ----
 con <- dbConnect(
   duckdb::duckdb(
@@ -54,11 +63,16 @@ if (!all(c("cast_seq", "dtime_pt") %in% cast_flds))
     "Rebuild with: Rscript prep_db.R latest TRUE")
 
 # bathymetry (loaded once at app start) ----
-# bathy_rast: full-res positive-down depth (m), land = 0 — used to sample
-# seafloor depth at cast positions for the transect plot (get_transect_bathy).
+# bathy_rast: full-res positive-down depth (m), land = 0 — used to sample the
+# seafloor ALONG the transect for the plot (get_transect_bathy).
 # bathy_rast_map: a coarser, land-masked copy for the map raster layer (NA
 # land -> transparent; aggregated 3x, ample for the regional overview).
-bathy_rast     <- terra::rast(bathy_tif)
+#
+# The app ships its own crop, so point calcofi4r::cc_bathy() at it rather than
+# letting it fetch the identical raster from GCS on a server that may not have
+# egress. Same numbers either way — this is which copy, not which grid.
+options(calcofi4r.bathy = bathy_tif)
+bathy_rast     <- cc_bathy()
 bathy_rast_map <- terra::aggregate(
   terra::ifel(bathy_rast <= 0, NA, bathy_rast),
   fact = 3, fun = "mean", na.rm = TRUE)
@@ -146,28 +160,36 @@ compute_segments <- function(casts_df) {
     st_as_sf(sf_column_name = "geom", crs = 4326)
 }
 
-# extract bathymetry at each cast position (not interpolated between).
-# a CalCOFI cruise zigzags across the grid; interpolating lon/lat between
-# consecutive casts often crosses land (e.g. Channel Islands), producing
-# nonsense "bathymetry" along the transect. using cast locations only keeps
-# depth firmly in-water.
+# sample the seafloor ALONG the transect, every BATHY_INTERVAL_M, not once per
+# cast. A cast-only profile does not simplify the terrain, it draws different
+# terrain: on line 86.7 station 50 sits on a Channel Islands bank at 80 m between
+# neighbours 37 km away in 1,200-1,650 m, which came out as one triangle 74 km
+# wide and 1.5 km tall — at the depths where the thermocline is read.
+#
+# This used to refuse to interpolate, on the grounds that a cruise zigzags and a
+# leg between two casts can cross land. That risk is real and is now handled
+# rather than avoided: cc_transect_bathy() flags land (`on_land`) and the plot
+# breaks the polygon there, so a crossing reads as coastline instead of being
+# hidden behind a straight line drawn through it.
+#
+# 500 m is calcofi4r's default and sits just above GEBCO's own ~390 m cell.
+BATHY_INTERVAL_M <- 500
+
 get_transect_bathy <- function(lons, lats, dists_km) {
   stopifnot(
     length(lons) == length(lats),
     length(lons) == length(dists_km))
   if (length(lons) < 2) return(NULL)
 
-  # local gebco_calcofi.tif uses positive-down convention (ocean depth > 0,
-  # land near 0). clamp land/negatives to 0 so the polygon stays at the surface
-  # over dry points (CalCOFI casts shouldn't be on land, but be defensive).
-  depths <- terra::extract(
-    bathy_rast,
-    cbind(lons, lats),
-    method = "bilinear")[, 1]
-
-  tibble(
-    dist_km       = dists_km,
-    bathy_depth_m = pmax(depths, 0))
+  # dists_km is the plot's x-axis (cumulative cast-to-cast distance), so hand it
+  # in as the ruler: the profile is then anchored exactly at every cast and
+  # stretched between them, rather than landing on a second, disagreeing axis.
+  cc_transect_bathy(
+    lons, lats,
+    dist_km    = dists_km,
+    interval_m = BATHY_INTERVAL_M,
+    bathy      = bathy_rast) |>
+    select(dist_km, bathy_depth_m = depth_m, on_land)
 }
 
 # map each station occupation to its cast_seq (numeric ord_occ, drops zero
@@ -291,20 +313,63 @@ build_transect_plotly <- function(meas_data, bathy_data = NULL,
       shape = 21, fill = "white", colour = "grey20",
       size  = 1.5, stroke = 0.3, alpha = 0.6))
 
-  if (!is.null(bathy_data)) {
-    bathy_poly <- bind_rows(
-      bathy_data |> mutate(bathy_depth_m = pmin(bathy_depth_m, y_max)),
-      tibble(
-        dist_km       = c(max(bathy_data$dist_km), min(bathy_data$dist_km)),
-        bathy_depth_m = c(y_max, y_max)))
+  # seafloor silhouette ----
+  # Split at land. A cruise track zigzags, so a leg between two casts can cross
+  # an island; the profile reports those samples as on_land at depth 0. Drawing
+  # them as part of the seafloor would raise a wall to the surface that reads as
+  # bathymetry. Instead each contiguous in-water run is its own closed polygon —
+  # so the silhouette genuinely breaks at the coast — and the land itself is a
+  # separate full-height band, which is the truth: there is no water column
+  # there to show. Selections that stay offshore (most of them) produce exactly
+  # one run and look identical to before.
+  b <- if (is.null(bathy_data)) NULL else filter(bathy_data, !is.na(bathy_depth_m))
+  if (!is.null(b) && nrow(b) > 1) {
+    b <- arrange(b, dist_km) |>
+      mutate(
+        run           = cumsum(c(1, diff(as.integer(on_land)) != 0)),
+        bathy_depth_m = pmin(bathy_depth_m, y_max))
 
-    p_main <- p_main +
-      geom_polygon(
-        data      = bathy_poly,
-        aes(dist_km, bathy_depth_m),
-        fill      = "grey70",
-        colour    = "black",
-        linewidth = 0.4)
+    sea_poly <- b |>
+      filter(!on_land) |>
+      group_by(run) |>
+      group_modify(~ bind_rows(
+        .x,
+        # close the polygon along the bottom of the panel
+        tibble(dist_km       = c(max(.x$dist_km), min(.x$dist_km)),
+               bathy_depth_m = c(y_max, y_max)))) |>
+      ungroup()
+
+    if (nrow(sea_poly))
+      p_main <- p_main +
+        geom_polygon(
+          data      = sea_poly,
+          aes(dist_km, bathy_depth_m, group = run),
+          fill      = "grey70",
+          colour    = "black",
+          linewidth = 0.4)
+
+    # each land band reaches the midpoint of the gap to its neighbouring
+    # in-water sample, so a single land sample is a visible band and not a
+    # zero-width line
+    ix_land <- which(b$on_land)
+    if (length(ix_land)) {
+      land_band <- lapply(split(ix_land, b$run[ix_land]), function(ix) {
+        i0 <- min(ix); i1 <- max(ix)
+        tibble(
+          xmin = if (i0 > 1)       mean(b$dist_km[c(i0 - 1, i0)]) else b$dist_km[i0],
+          xmax = if (i1 < nrow(b)) mean(b$dist_km[c(i1, i1 + 1)]) else b$dist_km[i1])
+      }) |> bind_rows()
+
+      p_main <- p_main +
+        geom_rect(
+          data  = land_band,
+          aes(xmin = xmin, xmax = xmax, ymin = 0, ymax = y_max),
+          # opaque: the interpolated field extends across land because the
+          # interpolator has no idea land is there, and letting it show through
+          # would present that as something measured
+          fill  = "grey35",
+          inherit.aes = FALSE)
+    }
   }
 
   # faint vertical guide line at each station occupation; the letter labels
