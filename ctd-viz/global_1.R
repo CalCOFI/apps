@@ -698,129 +698,80 @@ occ_depth_summary <- function(con, cruise_key) {
 }
 
 # tour ----
-# two separate conductor tours (see server.R's start_welcome()/
-# start_walkthrough()):
-#   tour_welcome     — single centered (no `el`) intro step, auto-shown on
-#                       first visit (gated client-side via localStorage).
-#                       its own "Start" button (embedded in the step text,
-#                       not a Conductor default button) is the only thing
-#                       that kicks off the walkthrough below — closing this
-#                       step (Esc / the x) never does. neither that button
-#                       nor the x carry an onclick attribute here — Shepherd
-#                       sanitizes step text and strips inline event handler
-#                       attributes, so both are just marker classes
-#                       (.ctdviz-tour-start / .ctdviz-tour-close) and the
-#                       actual click handling lives in ui.R's own <script>,
-#                       outside anything Shepherd touches.
-#   tour_walkthrough — the 6-step guided tour, started from that button or
-#                       from the help icon in the header. never auto-starts
-#                       on its own.
+# conductor tour: auto-shown on first visit (gated client-side via
+# localStorage), and re-openable any time from the help icon in the header.
 # step `el` selectors target ids assigned in ui.R.
-tour_welcome <- Conductor$new(exitOnEsc = TRUE, keyboardNavigation = TRUE)$
+tour <- Conductor$new(exitOnEsc = TRUE, keyboardNavigation = TRUE)$
   step(
     title = "Welcome to CalCOFI CTD Casts",
-    text  = "<span class='ctdviz-tour-close' title='Close tour'>&times;</span>
-      Explore <b>CTD</b> (<b>C</b>onductivity, <b>T</b>emperature,
-      <b>D</b>epth) casts from CalCOFI cruises (1949–present).<br><br>
-      <b>Purpose:</b> see how temperature, salinity, oxygen, and other
-      variables change with depth at each station and along a
-      transect. The <b>Plot</b> tab is the main view everything builds
-      toward, and each of the 14 measured parameters can be downloaded
-      as a depth profile from the Readings tab.<br><br>
+    text  = "Explore <b>CTD</b> (<b>C</b>onductivity, <b>T</b>emperature,
+      <b>D</b>epth) casts from CalCOFI cruises (1949–present). The instrument
+      is lowered through the water column on a winch, recording temperature,
+      salinity (derived from conductivity), pressure, oxygen, and other
+      variables every few centimetres of descent.<br><br>
       <b>What you're looking at:</b> casts have been adaptively thinned
       (Douglas-Peucker, ~10 m grid + measurement inflections) and limited to
       <b>downcasts only</b>, so the app stays fast while preserving the shape
       of each profile.<br><br>
-      <i style='font-size:0.85em'>Press Esc to exit at any time. Re-open
-      the walkthrough with the <span style='font-size:1.1em'>?</span> in
-      the header.</i>
-      <div style='text-align:right; margin-top:16px;'>
-      <button type='button' class='shepherd-button ctdviz-tour-start'>Start</button>
-      </div>")
-
-tour_walkthrough <- Conductor$new(exitOnEsc = TRUE, keyboardNavigation = TRUE)$
+      <i>Press Esc to exit at any time. Re-open this tour with the
+      <span style='font-size:1.1em'>?</span> in the header.</i>")$
   step(
     el    = "#sel_cruise + .selectize-control",
     title = "Pick a cruise",
-    text  = "<span class='ctdviz-tour-close' title='Close tour'>&times;</span>
-      Cruises are labelled <b>YYYY-MM — ship (cruise_key)</b>, newest
-      first. Changing the cruise reloads the map, the table, and the plot.
-      <div class='ctdviz-tour-step'>1 of 6</div>",
-    highlightClass = "ctdviz-tour-highlight")$
+    text  = "Cruises are labelled <b>YYYY-MM — ship (cruise_key)</b>, newest
+      first. Changing the cruise reloads the map, the table, and the plot.")$
   step(
-    el       = "#ctdviz_params_pane",
-    title    = "Pick a parameter",
-    text     = "<span class='ctdviz-tour-close' title='Close tour'>&times;</span>
-      Every available variable is listed here — click one to select it,
-      same as the <b>Measurement</b> dropdown up top. The selected variable
-      drives the transect plot and the Readings table; the Cruise dropdown
-      auto-filters to cruises that actually carry whatever's chosen.
-      <div class='ctdviz-tour-step'>2 of 6</div>",
-    # left, not the default (right) — this pane runs the height of the data
-    # column on the right side of the app, so there's no room to its right;
-    # left puts the tooltip over the map instead, which has the space.
-    position = "left",
-    highlightClass = "ctdviz-tour-highlight")$
+    el       = "#sel_meas_type + .selectize-control",
+    title    = "Pick a measurement",
+    text     = "The selected variable drives the transect plot and the
+      Measurements table. Choices are the canonical CTD variables retained in
+      <code>ctd_thin</code>. The cruise dropdown auto-filters to cruises
+      that actually carry the chosen variable.",
+    # default (bottom) placement dropped the tooltip right over the
+    # Parameters pane content underneath the dropdown — pin it to the right
+    # instead, alongside the pane, so it no longer covers what it's
+    # pointing at.
+    position = "right")$
   step(
     el    = "#pane_map",
     title = "Map: pick a transect",
-    text  = "<span class='ctdviz-tour-close' title='Close tour'>&times;</span>
-      Click one station to anchor the transect, then click another —
+    text  = "Click one station to anchor the transect, then click another —
       every station between them along the cruise track gets selected.
       Only casts that carry the chosen measurement appear on the map.
       Selected casts are numbered by <b>cast_seq</b> (station-occupation
-      order).
-      <div class='ctdviz-tour-step'>3 of 6</div>",
-    highlightClass = "ctdviz-tour-highlight")$
+      order).")$
   step(
     el             = "#subtabs",
     title          = "Cruises / Parameters / Casts / Readings / Plot",
-    text           = "<span class='ctdviz-tour-close' title='Close tour'>&times;</span>
-      <b>Cruises</b>: recent cruises, or search for an older one.<br>
-      <b>Parameters</b>: every variable — click one to select it.<br>
-      <b>Casts</b>: the transect's stations — click a row to glow it on
-      the map, or download.<br>
-      <b>Readings</b>: the rows feeding the plot — download any of the
-      14 parameters here.<br>
-      <b>Plot</b>: the main view — an ODV-style transect over bathymetry.
-      <div class='ctdviz-tour-step'>4 of 6</div>",
-    # bottom, not the default (top) — top placement pinned the tooltip above
-    # the tab bar, which sits high enough in the layout that the tooltip
-    # clipped against the top of the viewport. bottom drops it into the
-    # content area below the tabs instead, which also keeps the arrow
-    # centered on the target rather than getting shifted sideways by
-    # floating-ui's viewport-collision handling (which is what made it
-    # read as "pointing at Cruise/Readings"). the remaining snugness against
-    # the highlight outline is handled with a per-placement margin in ui.R.
-    position       = "bottom",
+    text           = "<b>Cruises</b>: recent cruises, or search for an older one —
+      same as the Cruise dropdown above.<br>
+      <b>Parameters</b>: every available variable — click one to
+      select it, same as the Measurement dropdown above.<br>
+      <b>Casts</b>: click rows to multi-select arbitrary stations,
+      reset the selection, and download.<br>
+      <b>Readings</b>: the <code>ctd_thin</code> rows feeding the plot.<br>
+      <b>Plot</b>: ODV-style interpolated transect, with bathymetry as a
+      clipped silhouette underneath.",
     # the tour has no modal overlay, so without this the only visual cue is
-    # the tooltip's arrow. outline the whole bar instead (CSS in ui.R).
+    # the tooltip's arrow — which, since it attaches near one edge of the
+    # tab bar, reads as "pointing at Readings" even though the text covers
+    # all five tabs. outline the whole bar instead (CSS in ui.R).
     highlightClass = "ctdviz-tour-highlight")$
   step(
     el    = "#btn_settings",
     title = "Plot settings",
-    text  = "<span class='ctdviz-tour-close' title='Close tour'>&times;</span>
-      Click the gear for optional <b>Bathymetry</b> (GEBCO 2025
-      seafloor overlay on the map) and <b>Max depth</b> (caps the plot
-      y-axis & Measurements table). Both default off / open so the plot
-      fits the data it just drew.
-      <div class='ctdviz-tour-step'>5 of 6</div>",
-    # left, not the default bottom — this sits in the nav bar corner, and
-    # bottom placement would drop the tooltip over the tab content below.
+    text  = "Optional <b>Bathymetry</b> overlay on the map (GEBCO 2025
+      seafloor) and an optional <b>Max depth</b> cap on the plot y-axis &
+      Measurements table. Both default off / open so the plot fits the
+      data it just drew.",
+    # this step describes controls tucked inside a bslib/Bootstrap popover
+    # that isn't open by default — pop it open for the duration of the step
+    # (and close it again on advance/back/cancel) so what's being described
+    # is actually visible, and keep the tour tooltip off to the side so it
+    # doesn't cover the now-open popover.
     position = "left",
-    highlightClass = "ctdviz-tour-highlight")$
-  step(
-    el    = "#btn_feedback",
-    title = "Send feedback",
-    text  = "<span class='ctdviz-tour-close' title='Close tour'>&times;</span>
-      Spot a bug, or have an idea for the app? Click here any time to
-      send it our way.
-      <div class='ctdviz-tour-step'>6 of 6</div>",
-    # bottom, same reasoning as #subtabs — this sits at the top of the
-    # header, so the default (top) placement would clip against the
-    # viewport edge.
-    position       = "bottom",
-    highlightClass = "ctdviz-tour-highlight")
+    onShow   = "bootstrap.Popover.getOrCreateInstance(document.getElementById('btn_settings')).show();",
+    onHide   = "bootstrap.Popover.getOrCreateInstance(document.getElementById('btn_settings')).hide();")
 
 # feedback ----
 # posted server-side (httr::POST from server.R) straight to a Google Form's

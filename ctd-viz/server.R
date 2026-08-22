@@ -1,15 +1,19 @@
 # ctd-viz server — linked selection across the map + table; the plot follows.
 #
 # the selection unit is a station occupation (ord_occ within the loaded cruise).
-# a single store, rv$sel_occ, is the source of truth. two writers (map / table)
-# set it; the map + table updaters push it back to their views and the transect
-# plot re-renders from it. loops are broken by a setequal() no-op guard in every
-# writer. the map updater runs for EVERY source — clicking a maplibre feature
-# does not auto-highlight it — while the table updater skips source == "table"
-# (DT already shows the clicked rows). rv$sel_source carries that one distinction.
+# a single store, rv$sel_occ, is the source of truth, and the map is its only
+# writer — a transect picker: click a station to anchor, click another to
+# select every station between them along the cruise track (ord_occ order).
+# the map + table updaters push it back to their views and the transect plot
+# re-renders from it. loops are broken by a setequal() no-op guard.
 #
-# the map writer is a transect picker: click a station to anchor, click another
-# to select every station between them along the cruise track (ord_occ order).
+# the Casts table is a read-only view of the selection, not a second writer:
+# it narrows to just the selected stations once one exists (casts_tbl_shown()),
+# and clicking a row there just glows that cast on the map rather than
+# changing rv$sel_occ. an earlier version let table clicks write the store
+# too, but a table redraw (from the map-filter narrowing the list) could
+# itself report a spurious "nothing selected" click and cancel an
+# in-progress map anchor before a second map click completed the range.
 #
 # cast_seq (numeric ord_occ) is used end-to-end for visible labels: map markers,
 # plot annotations, the Casts table, and the Measurements table.
@@ -27,7 +31,7 @@ server <- function(input, output, session) {
     map_casts   = NULL,          # sf: one row per ord_occ (station occupation)
     sel_occ     = character(0),  # selected ord_occ — THE selection store
     sel_anchor  = NULL,          # in-progress transect start (map picker)
-    sel_source  = NULL,          # "map" | "table" | "reset" | "restore"
+    sel_source  = NULL,          # "map" | "reset" | "restore"
     pending_sel = NULL)          # cast selection awaiting restore (url bookmark)
 
   # === URL bookmarking =====================================================
@@ -43,9 +47,12 @@ server <- function(input, output, session) {
   # the link); the cast selection is restored via sel_occ instead.
   setBookmarkExclude(c(
     "._bookmark_", "bookmark_search", "tour_seen", "dark_toggle",
-    "btn_help", "btn_reset_sel", "btn_settings", "dl_data",
-    "pane_top__shinyjquiBookmarkState__resizable", "pane_top_size",
-    "pane_top_is_resizing",
+    "btn_help", "btn_start_walkthrough", "btn_tour_close", "btn_reopen_welcome",
+    "btn_reset_sel", "btn_select_all", "btn_settings",
+    "dl_data", "dl_casts", "dl_data_all", "dl_casts_all", "param_pick",
+    "btn_back_to_params", "cruise_pick",
+    "btn_feedback", "btn_feedback_submit",
+    "fb_working", "fb_improve", "fb_broken", "fb_email",
     "map_cruise_bbox", "map_cruise_feature_click", "map_cruise_click",
     "map_cruise_bounds", "map_cruise_center", "map_cruise_zoom",
     "tbl_casts_columns_selected", "tbl_casts_cells_selected",
@@ -103,6 +110,22 @@ server <- function(input, output, session) {
         max_depth_m = max_depth_m,
         n_depths    = n_depths) |>
       arrange(ord_occ)
+  })
+
+  # what the Casts table actually shows. narrowed to just the current
+  # selection when that selection came from the map — clicking a transect on
+  # the map is a "show me those stations" action, so the table should follow
+  # it rather than stay on the full list with the pick just highlighted
+  # underneath. table-driven selection (clicking rows yourself) does NOT
+  # narrow the table — that would remove the very rows you'd click next to
+  # extend a multi-select. Reset (or loading a different cruise) clears
+  # rv$sel_source back off "map", which brings the full list back.
+  casts_tbl_shown <- reactive({
+    d <- casts_tbl()
+    if (identical(rv$sel_source, "map") && length(rv$sel_occ) > 0) {
+      d <- d |> filter(ord_occ %in% rv$sel_occ)
+    }
+    d
   })
 
   # transect labels (cast_seq numbers) for the current selection, in cruise-
@@ -218,7 +241,18 @@ server <- function(input, output, session) {
       lat <- mc$lat_dec[1]
       pad <- 0.5   # degrees ~ ~55 km, enough for a regional context
       c(lon - pad, lat - pad, lon + pad, lat + pad)
-    } else mc
+    } else {
+      # pad the multi-station bbox ~10% on each side so the initial view
+      # backs off slightly from a tight fit — as.numeric() strips the
+      # xmin/ymin/xmax/ymax names st_bbox() attaches; a NAMED vector here
+      # previously serialized to a JSON object instead of a plain array,
+      # which made fit_bounds() fail silently and fall back to a whole-
+      # world view. plain unnamed numbers avoid that entirely.
+      bb    <- as.numeric(sf::st_bbox(mc))  # xmin, ymin, xmax, ymax
+      pad_x <- (bb[3] - bb[1]) * 0.10
+      pad_y <- (bb[4] - bb[2]) * 0.10
+      c(bb[1] - pad_x, bb[2] - pad_y, bb[3] + pad_x, bb[4] + pad_y)
+    }
 
     # initial basemap follows the dark/light toggle's current value; subsequent
     # toggles are handled by the set_style observer below (preserves layers,
@@ -252,6 +286,10 @@ server <- function(input, output, session) {
     }
 
     m |>
+      add_circle_layer(             # "look here" glow for the last Casts
+        id = "row-glow", source = mc,  # row clicked — hidden (opacity 0)
+        circle_color = "#ffd43b", circle_radius = 14, circle_opacity = 0,
+        circle_stroke_width = 0) |>    # until that click sets its filter
       add_circle_layer(
         id = "casts", source = mc,
         circle_color = "#0077cc", circle_radius = 5, circle_opacity = 0.85,
@@ -296,9 +334,22 @@ server <- function(input, output, session) {
     occ_all <- sort(rv$map_casts$ord_occ)            # cruise-track order
 
     if (is.null(rv$sel_anchor)) {
-      rv$sel_anchor <- occ
+      if (setequal(rv$sel_occ, occ)) {
+        # re-clicking the only currently-selected station — unclick it,
+        # rather than restarting a new anchor on the same spot.
+        rv$sel_source <- "map"
+        rv$sel_occ    <- character(0)
+      } else {
+        rv$sel_anchor <- occ
+        rv$sel_source <- "map"
+        rv$sel_occ    <- occ
+      }
+    } else if (identical(rv$sel_anchor, occ)) {
+      # re-clicking the just-anchored station — cancel the anchor instead
+      # of "completing" a zero-length range on the same point.
+      rv$sel_anchor <- NULL
       rv$sel_source <- "map"
-      rv$sel_occ    <- occ
+      rv$sel_occ    <- character(0)
     } else {
       i  <- range(match(c(rv$sel_anchor, occ), occ_all))
       rng <- occ_all[i[1]:i[2]]
@@ -308,17 +359,34 @@ server <- function(input, output, session) {
         rv$sel_occ    <- rng
       }
     }
+    # jump to Casts — but only from a tab where a station click would
+    # otherwise have no visible result (Cruises / Parameters / Plot).
+    # Readings already follows the selection just as directly as Casts
+    # does, so forcing a switch away from it just to land on Casts is a
+    # step backwards, not a convenience.
+    if (!isTRUE(input$subtabs %in% c("Casts", "Readings")))
+      nav_select("subtabs", "Casts", session = session)
   }, ignoreInit = TRUE)
 
-  # (2) table rows -> their occupations
-  observeEvent(input$tbl_casts_rows_selected, {
-    sel <- casts_tbl()$ord_occ[input$tbl_casts_rows_selected]
-    sel <- sel[!is.na(sel)]
-    if (setequal(sel, rv$sel_occ)) return()
-    rv$sel_anchor <- NULL          # a table pick ends any in-progress map range
-    rv$sel_source <- "table"
-    rv$sel_occ    <- sel
-  }, ignoreNULL = FALSE, ignoreInit = TRUE)
+  # (2) table row click -> glow that one cast on the map, from wherever the
+  #     view already is (no pan/zoom). NOT a selection write — a table click
+  #     used to feed straight into rv$sel_occ (the same store the map's
+  #     transect picker writes), which meant clicking a row mid-anchor
+  #     silently cancelled whatever map range was in progress, and a full
+  #     table redraw (e.g. right after the map-filter below narrows the
+  #     list) could itself report a spurious "nothing selected" click that
+  #     reset the anchor before a second map click had a chance to complete
+  #     the range. the map is now the only thing that writes rv$sel_occ; a
+  #     table row is just a fast way to spot a station on it. reads
+  #     casts_tbl_shown() — whatever's actually on screen, which is the
+  #     map-filtered list once a map selection is active.
+  observeEvent(input$tbl_casts_row_last_clicked, {
+    occ <- casts_tbl_shown()$ord_occ[input$tbl_casts_row_last_clicked]
+    req(occ)
+    maplibre_proxy("map_cruise") |>
+      set_filter("row-glow", list("==", list("get", "ord_occ"), occ)) |>
+      set_paint_property("row-glow", "circle-opacity", 0.55)
+  })
 
   # === selection updaters: the store -> each view (skip the writing view) ==
 
@@ -369,37 +437,63 @@ server <- function(input, output, session) {
   # "ready" signal to paint the current selection in.
   observeEvent(input$map_cruise_bbox, paint_map_selection())
 
-  # store -> table proxy
-  observeEvent(rv$sel_occ, {
-    if (identical(rv$sel_source, "table")) return()
-    if (is.null(rv$map_casts)) return()
-    rows <- which(casts_tbl()$ord_occ %in% rv$sel_occ)
-    DT::dataTableProxy("tbl_casts") |> DT::selectRows(rows)
-  }, ignoreNULL = FALSE, ignoreInit = TRUE)
-
   # store -> plot: output$plot_transect re-renders on rv$sel_occ (below)
 
   # --- selection bar — alternates between click-to-select instructions
   #     (no selection / right after Reset) and [Reset · count · Download]
-  #     once the user starts a selection (anchored or completed).
+  # persistent link back to Parameters — Casts is where param_pick sends
+  # you, so this closes the loop: Parameters -> pick -> Casts -> Change
+  # parameter -> back to Parameters, without hunting for the tab by hand.
+  # one combined line rather than two stacked bars (parameter + selection
+  # state used to each get their own full-width row, which read as cluttered
+  # for what's really one contextual header).
+  observeEvent(input$btn_back_to_params, {
+    nav_select("subtabs", "Parameters", session = session)
+  })
+
   output$ui_sel_bar <- renderUI({
-    if (length(rv$sel_occ) == 0 && is.null(rv$sel_anchor)) {
-      return(div(
-        class = "small text-muted",
-        "Click rows to select; the map and plot follow ",
-        "(selecting on the map updates the table in turn)."))
-    }
+    mt    <- input$sel_meas_type
+    pname <- meas_types$param_name[meas_types$measurement_type == mt]
+    if (length(pname) == 0) pname <- mt
+    has_sel <- length(rv$sel_occ) > 0 || !is.null(rv$sel_anchor)
+
     div(
-      class = "d-flex align-items-center gap-2 flex-wrap",
+      class = "d-flex align-items-center gap-2 flex-wrap small",
+      tags$button(
+        class   = "btn btn-sm ctdviz-param-chip",
+        onclick = "Shiny.setInputValue('btn_back_to_params', Math.random(), {priority: 'event'})",
+        bsicons::bs_icon("chevron-left", class = "me-1"), pname),
+      tags$span(class = "ctdviz-divider"),
+      # always available, selected or not — the map's own picker only ever
+      # gets you a transect (anchor + one more click), so this is the fast
+      # path to "just give me every cast in this cruise" for either viewing
+      # the full Casts list or downloading/plotting all of it at once.
       actionButton(
-        "btn_reset_sel", "Reset selection",
-        class = "btn-outline-secondary btn-sm"),
-      span(
-        class = "small text-muted",
-        textOutput("txt_sel_count", inline = TRUE)),
+        "btn_select_all", "Select all",
+        class = "ctdviz-btn-reset btn-sm"),
+      if (has_sel) {
+        tagList(
+          actionButton(
+            "btn_reset_sel", "Reset selection",
+            class = "ctdviz-btn-reset btn-sm"),
+          span(
+            class = "text-muted",
+            textOutput("txt_sel_count", inline = TRUE)))
+      } else {
+        span(
+          class = "text-muted",
+          "Click stations on the map to select a transect.")
+      },
       div(
         class = "ms-auto",
         uiOutput("ui_download", inline = TRUE)))
+  })
+
+  observeEvent(input$btn_select_all, {
+    req(rv$map_casts)
+    rv$sel_anchor <- NULL
+    rv$sel_source <- "map"
+    rv$sel_occ    <- sort(rv$map_casts$ord_occ)
   })
 
   observeEvent(input$btn_reset_sel, {
@@ -416,23 +510,102 @@ server <- function(input, output, session) {
     glue("{n} cast(s) selected.")
   })
 
+  # === Cruises subtab =======================================================
+  # recent-by-default list — same clicking-a-row-drives-the-dropdown pattern
+  # as Parameters. the full cruise list (1949-present) is too long to show
+  # flat the way Parameters does, so this shows the most recent
+  # CRUISE_LIST_DEFAULT_N; the Cruise dropdown up top already has its own
+  # built-in search for reaching further back, so this tab doesn't duplicate
+  # that with a second search box.
+  CRUISE_LIST_DEFAULT_N <- 20
+  output$ui_cruise_list <- renderUI({
+    d <- utils::head(cruise_choices, CRUISE_LIST_DEFAULT_N)
+
+    rows <- lapply(seq_len(nrow(d)), function(i) {
+      ck     <- d$cruise_key[i]
+      active <- isTRUE(input$sel_cruise == ck)
+      tags$div(
+        class   = paste(
+          "ctdviz-param-row", if (active) "ctdviz-param-row-active"),
+        onclick = sprintf(
+          "Shiny.setInputValue('cruise_pick', '%s', {priority: 'event'})", ck),
+        tags$span(class = "ctdviz-param-name", d$label[i]))
+    })
+    div(class = "ctdviz-param-list", rows)
+  })
+
+  observeEvent(input$cruise_pick, {
+    updateSelectInput(session, "sel_cruise", selected = input$cruise_pick)
+  })
+
+  # === Parameters subtab ====================================================
+  # flat, always-visible list of every available measurement — the starter
+  # pane (see ui.R). Clicking a row is the same action as using the
+  # Measurement dropdown up top; this just drives that dropdown instead of
+  # keeping its own separate state, so the two stay in sync no matter which
+  # one someone uses. It also jumps straight to Casts (see the param_pick
+  # observer below) — Casts is where the download button lives, so picking a
+  # parameter takes you directly toward getting data instead of leaving you
+  # on this list to find your own way to the next step.
+  param_order <- order(
+    param_priority_rank(meas_types$param_name), meas_types$param_name)
+  output$ui_param_list <- renderUI({
+    rows <- lapply(param_order, function(i) {
+      mt     <- meas_types$measurement_type[i]
+      icon   <- meas_types$icon[i]
+      pname  <- meas_types$param_name[i]
+      units  <- meas_types$units[i]
+      active <- isTRUE(input$sel_meas_type == mt)
+      tags$div(
+        class   = paste(
+          "ctdviz-param-row", if (active) "ctdviz-param-row-active"),
+        onclick = sprintf(
+          "Shiny.setInputValue('param_pick', '%s', {priority: 'event'})", mt),
+        tags$span(class = "ctdviz-param-icon", HTML(icon)),
+        tags$span(class = "ctdviz-param-name", pname),
+        if (nzchar(units))
+          tags$span(class = "ctdviz-param-unit", units))
+    })
+    div(class = "ctdviz-param-list", rows)
+  })
+
+  observeEvent(input$param_pick, {
+    updateSelectizeInput(session, "sel_meas_type", selected = input$param_pick)
+    nav_select("subtabs", "Casts", session = session)
+  })
+
   # === Casts subtab ========================================================
 
   output$tbl_casts <- DT::renderDT(
     {
-      d <- casts_tbl()
+      d <- casts_tbl_shown()
       req(nrow(d) > 0)
       d |> select(-ord_occ)        # ord_occ is the join key; cast_seq is shown
     },
-    selection = "multiple", rownames = FALSE, filter = "top",
+    # single, not multiple — a row click no longer builds a selection (see
+    # the row_last_clicked handler above), just points the map at one cast,
+    # so there's nothing to accumulate across rows.
+    selection = "single", rownames = FALSE, filter = "top",
+    colnames = c(
+      "Cast" = "cast_seq", "Line" = "line", "Station" = "sta",
+      "Date & time (local)" = "dtime_pt", "Max depth (m)" = "max_depth_m",
+      "# depths recorded" = "n_depths"),
+    class   = "cell-border stripe ctdviz-tbl",
     options = list(
       # 't' = table; 'l' = length picker, 'i' = info, 'p' = pagination —
       # all at the bottom. dropping 'f' kills the global Search (the per-
       # column filter row from filter = "top" is the search now).
-      dom        = "tlip",
-      pageLength = 8, scrollX = TRUE, order = list(list(0, "asc"))))
-  # tbl_casts drives the linked selection — keep it (and its DT proxy) live
-  # even while the Measurements subtab is the one on screen
+      # autoWidth off — see the same option on tbl_values below for why;
+      # matters even more here since this table (unlike tbl_values) is kept
+      # rendering while genuinely hidden (suspendWhenHidden = FALSE, just
+      # below), which is exactly the situation that throws off scrollX's
+      # cached column widths.
+      autoWidth      = FALSE,
+      dom            = "tlip",
+      pageLength     = 25, lengthMenu = c(10, 25, 50, 100),
+      scrollX        = TRUE, order = list(list(0, "asc"))))
+  # keep it (and click events) live even while the Measurements subtab is
+  # the one on screen, and so it can redraw when the map filter changes it
   outputOptions(output, "tbl_casts", suspendWhenHidden = FALSE)
 
   # measurements (ctd_thin) for the selected occupations + chosen variable.
@@ -506,8 +679,8 @@ server <- function(input, output, session) {
       glue("Measurements — select casts to list {mt} measurements")
     } else {
       d_show <- d |> filter(depth_m <= !!input$sl_max_depth)
-      glue("Measurements — {mt}: {nrow(d_show)} rows ",
-           "across {length(unique(d_show$ord_occ))} selected cast(s)",
+      glue("Measurements — {mt}: ",
+           "{length(unique(d_show$ord_occ))} selected cast(s)",
            if (input$sl_max_depth < max(d$depth_m, na.rm = TRUE))
              glue(" (capped at {input$sl_max_depth} m)")
            else
@@ -530,17 +703,122 @@ server <- function(input, output, session) {
         arrange(cast_seq, depth_m)
     },
     selection = "none", rownames = FALSE, filter = "none",
-    options = list(pageLength = 12, scrollX = TRUE))
+    colnames = c(
+      "Cast" = "cast_seq", "Date & time (local)" = "dtime_pt",
+      "Depth (m)" = "depth_m", "Value" = "value", "Quality flag" = "qual"),
+    class   = "cell-border stripe ctdviz-tbl",
+    options = list(
+      # dom without 'f' drops the global search box — it matched every
+      # column's rendered text at once (a depth of 10, a value containing
+      # "10", a cast numbered 10, a timestamp with "10" in it, all mixed
+      # together with no way to tell which one matched), which wasn't a
+      # useful filter for this table. matches the Casts tab, which dropped
+      # it for the same reason.
+      # autoWidth off: with scrollX, DataTables measures + fixes each
+      # column's width once at init, in a separate header element from the
+      # body (that's how scrollX works) — if that first measurement happens
+      # before the Readings tab is ever shown (or just doesn't match later,
+      # differently-sized content), the two drift out of sync and headers
+      # stop lining up with their columns. autoWidth: FALSE sizes columns
+      # from actual cell content on every draw instead of a cached guess.
+      autoWidth  = FALSE,
+      dom        = "tlip",
+      pageLength = 25, lengthMenu = c(10, 25, 50, 100), scrollX = TRUE))
 
   # === Download ============================================================
-  # joined measurements + cast metadata for the current selection. enabled
-  # only when at least one cast is selected. lives in the Casts tab header.
-  output$ui_download <- renderUI({
-    if (length(rv$sel_occ) == 0) return(NULL)
-    downloadButton(
-      "dl_data", "Download CSV",
-      class = "btn-primary btn-sm")
-  })
+  # joined measurements + cast metadata. lives in both the Casts and Readings
+  # tab headers — genuinely different exports now, not just different
+  # styling on the same download: dl_casts (Casts tab) exports the
+  # cast-level metadata table (cast_seq/line/station/date/max depth/#
+  # depths — what tbl_casts actually shows), dl_data (Readings tab) exports
+  # the per-depth measurement rows. Both used to point at dl_data alone, so
+  # the Casts button was silently exporting reading-level data instead of
+  # the cast list it sits next to — two separate output ids fixes that, not
+  # just the visual distinction between them.
+  #
+  # each is a small dropdown rather than a single button: "selected" (the
+  # rows currently picked — the original, selection-only behavior) and "all"
+  # (every cast in the current cruise, regardless of what's selected). the
+  # "selected" entry disables itself with nothing picked rather than hiding
+  # the whole control, since "all" stays available either way.
+  dl_dropdown <- function(id_sel, id_all, class, label_sel, label_all) {
+    has_sel <- length(rv$sel_occ) > 0
+    div(
+      class = "dropdown d-inline-block",
+      tags$button(
+        class            = paste("btn dropdown-toggle", class),
+        type             = "button",
+        `data-bs-toggle` = "dropdown",
+        `aria-expanded`  = "false",
+        bsicons::bs_icon("download", class = "me-1"), "Download"),
+      tags$ul(
+        class = "dropdown-menu dropdown-menu-end",
+        tags$li(
+          if (has_sel) {
+            downloadLink(id_sel, label_sel, class = "dropdown-item")
+          } else {
+            tags$span(class = "dropdown-item disabled", label_sel)
+          }),
+        tags$li(downloadLink(id_all, label_all, class = "dropdown-item"))))
+  }
+  output$ui_download <- renderUI(
+    dl_dropdown("dl_casts", "dl_casts_all", "btn-primary btn-sm",
+                "Selected casts", "All casts in cruise"))
+  output$ui_download_readings <- renderUI(
+    dl_dropdown("dl_data", "dl_data_all", "btn-primary btn-sm",
+                "Selected readings", "All readings in cruise"))
+
+  output$dl_casts <- downloadHandler(
+    filename = function() {
+      glue("ctd-viz_{rv$cruise_key}_casts_",
+           "{format(Sys.time(), '%Y%m%d-%H%M%S')}.csv")
+    },
+    content = function(file) {
+      d <- casts_tbl()
+      if (is.null(d) || nrow(d) == 0 || length(rv$sel_occ) == 0) {
+        readr::write_csv(tibble(), file)
+        return()
+      }
+      out <- d |>
+        filter(ord_occ %in% rv$sel_occ) |>
+        transmute(
+          cruise_key  = rv$cruise_key,
+          cast_seq    = cast_seq,
+          line        = line,
+          sta         = sta,
+          dtime_pt    = dtime_pt,
+          max_depth_m = max_depth_m,
+          n_depths    = n_depths) |>
+        arrange(cast_seq)
+      readr::write_csv(out, file)
+    })
+
+  # "all casts in cruise" — casts_tbl() is already every cast for the
+  # current cruise (map_casts, unfiltered by selection), so this just skips
+  # the ord_occ %in% rv$sel_occ step above rather than needing its own query.
+  output$dl_casts_all <- downloadHandler(
+    filename = function() {
+      glue("ctd-viz_{rv$cruise_key}_casts_all_",
+           "{format(Sys.time(), '%Y%m%d-%H%M%S')}.csv")
+    },
+    content = function(file) {
+      d <- casts_tbl()
+      if (is.null(d) || nrow(d) == 0) {
+        readr::write_csv(tibble(), file)
+        return()
+      }
+      out <- d |>
+        transmute(
+          cruise_key  = rv$cruise_key,
+          cast_seq    = cast_seq,
+          line        = line,
+          sta         = sta,
+          dtime_pt    = dtime_pt,
+          max_depth_m = max_depth_m,
+          n_depths    = n_depths) |>
+        arrange(cast_seq)
+      readr::write_csv(out, file)
+    })
 
   output$dl_data <- downloadHandler(
     filename = function() {
@@ -564,6 +842,59 @@ server <- function(input, output, session) {
           lat_dec          = lat_dec,
           lon_dec          = lon_dec,
           dist_km          = dist_km,
+          depth_m          = depth_m,
+          measurement_type = mt,
+          value            = measurement_value,
+          qual             = measurement_qual) |>
+        arrange(cast_seq, depth_m)
+      readr::write_csv(out, file)
+    })
+
+  # "all readings in cruise" — same shape as sel_meas_data() but sourced
+  # from every cast in the cruise (rv$all_casts) instead of just the
+  # selected transect, so there's no meaningful dist_km (that's cumulative
+  # distance *along the selected transect*, undefined without one).
+  all_meas_data <- reactive({
+    req(rv$cruise_key, input$sel_meas_type, rv$all_casts)
+    uuids <- unique(rv$all_casts$ctd_cast_uuid)
+    if (length(uuids) == 0) return(NULL)
+
+    d <- tbl(con, "ctd_thin") |>
+      filter(
+        cruise_key       == !!rv$cruise_key,
+        measurement_type == !!input$sel_meas_type,
+        ctd_cast_uuid %in% !!uuids) |>
+      select(ctd_cast_uuid, depth_m, measurement_value, measurement_qual) |>
+      collect()
+    if (nrow(d) == 0) return(NULL)
+
+    occ_xy <- rv$all_casts |>
+      distinct(ctd_cast_uuid, .keep_all = TRUE) |>
+      select(ctd_cast_uuid, ord_occ, cast_seq, dtime_pt, lat_dec, lon_dec)
+    d |> left_join(occ_xy, by = "ctd_cast_uuid")
+  })
+
+  output$dl_data_all <- downloadHandler(
+    filename = function() {
+      glue("ctd-viz_{rv$cruise_key}_{input$sel_meas_type}_all_",
+           "{format(Sys.time(), '%Y%m%d-%H%M%S')}.csv")
+    },
+    content = function(file) {
+      d <- all_meas_data()
+      if (is.null(d) || nrow(d) == 0) {
+        readr::write_csv(tibble(), file)
+        return()
+      }
+      mt <- input$sel_meas_type
+      out <- d |>
+        filter(depth_m <= !!input$sl_max_depth) |>
+        transmute(
+          cruise_key       = rv$cruise_key,
+          cast_seq         = cast_seq,
+          ord_occ          = ord_occ,
+          dtime_pt         = dtime_pt,
+          lat_dec          = lat_dec,
+          lon_dec          = lon_dec,
           depth_m          = depth_m,
           measurement_type = mt,
           value            = measurement_value,
@@ -611,11 +942,11 @@ server <- function(input, output, session) {
           method = "bilinear")[, 1], 0, na.rm = TRUE),
         error = function(e) NA_real_)
       p <- build_profile_plotly(
-        meas_data   = d,
-        meas_label  = meas_lab,
-        max_depth   = input$sl_max_depth,
-        cruise_key  = rv$cruise_key,
-        bathy_depth = bathy_depth)
+        meas_data    = d,
+        meas_label   = meas_lab,
+        max_depth    = input$sl_max_depth,
+        cruise_label = cruise_label_for(rv$cruise_key),
+        bathy_depth  = bathy_depth)
       if (is.null(p))
         return(transect_placeholder(
           "Too few measurements to draw a profile."))
@@ -634,11 +965,11 @@ server <- function(input, output, session) {
     bathy <- get_transect_bathy(occ_pos$lon, occ_pos$lat, occ_pos$dist_km)
 
     p <- build_transect_plotly(
-      meas_data  = d,
-      bathy_data = bathy,
-      meas_label = meas_lab,
-      max_depth  = input$sl_max_depth,
-      cruise_key = rv$cruise_key)
+      meas_data    = d,
+      bathy_data   = bathy,
+      meas_label   = meas_lab,
+      max_depth    = input$sl_max_depth,
+      cruise_label = cruise_label_for(rv$cruise_key))
     if (is.null(p))
       return(transect_placeholder(
         "Too few measurements to interpolate a transect."))
@@ -646,21 +977,132 @@ server <- function(input, output, session) {
   })
 
   # === Tour ================================================================
-  # auto-shown the first time a visitor lands (gated client-side via
-  # localStorage); the help icon in the header re-opens it anytime. wrapped
-  # in tryCatch so a conductor/JS hiccup doesn't take the session down.
-  start_tour <- function() {
-    tryCatch(tour$init()$start(),
-             error = function(e) message("tour failed to start: ", conditionMessage(e)))
+  # two separate tours (both defined in global.R): tour_welcome is the
+  # one-time intro, auto-shown the first time a visitor lands (gated
+  # client-side via localStorage) with its own "Start walkthrough" button;
+  # tour_walkthrough is the 6-step guided tour, which only ever starts when
+  # that button is clicked or the help icon is used — never automatically on
+  # its own. both wrapped in tryCatch so a conductor/JS hiccup doesn't take
+  # the session down.
+  # both return TRUE/FALSE for whether the tour actually started, rather
+  # than swallowing the error silently — the localStorage "seen" stamp
+  # below only gets written on a real success, so a conductor/JS hiccup
+  # doesn't permanently suppress the welcome popup for that browser.
+  start_welcome <- function() {
+    tryCatch({tour_welcome$init()$start(); TRUE},
+             error = function(e) {
+               message("welcome tour failed to start: ", conditionMessage(e))
+               FALSE
+             })
+  }
+  start_walkthrough <- function() {
+    tryCatch({tour_walkthrough$init()$start(); TRUE},
+             error = function(e) {
+               message("walkthrough tour failed to start: ", conditionMessage(e))
+               FALSE
+             })
+  }
+  # closing a tour from the x button (see ui.R) round-trips through here
+  # rather than being handled purely client-side — cancel() called directly
+  # on the JS Tour object (Shepherd.activeTour.cancel()) and a synthetic
+  # Escape keydown were both tried first and neither actually closed the
+  # popup, so this drives it the same way starting a tour already works:
+  # through the R6 object. tries both tours, since the x doesn't know which
+  # one is currently open; whichever isn't running just no-ops or errors
+  # harmlessly, caught below.
+  cancel_tour <- function(tour) {
+    tryCatch(tour$cancel(), error = function(e) NULL)
   }
 
   observeEvent(input$tour_seen, once = TRUE, ignoreNULL = TRUE, {
     if (isTRUE(input$tour_seen)) return()
-    start_tour()
-    session$sendCustomMessage("ctdviz_tour_seen", TRUE)
+    if (start_welcome()) session$sendCustomMessage("ctdviz_tour_seen", TRUE)
   })
 
+  # fired by the "Start" button embedded in tour_welcome's step (see
+  # global.R) — a plain Shiny.setInputValue() call, wired up client-side in
+  # ui.R (not an onclick on the button itself; Shepherd strips those from
+  # step HTML), but the effect is the same as any other actionButton.
+  observeEvent(input$btn_start_walkthrough, {
+    cancel_tour(tour_welcome)
+    start_walkthrough()
+  })
+
+  # fired by the x close control on every step of both tours (see ui.R).
+  observeEvent(input$btn_tour_close, {
+    cancel_tour(tour_welcome)
+    cancel_tour(tour_walkthrough)
+  })
+
+  # "CTD Casts" in the header (see ui.R) re-opens the welcome popup — the
+  # logo next to it already links out to calcofi.io, so this is the way
+  # back to the intro once the localStorage "seen" stamp has suppressed its
+  # automatic first-visit appearance.
+  observeEvent(input$btn_reopen_welcome, {
+    cancel_tour(tour_walkthrough)
+    start_welcome()
+  })
+
+  # re-opens the walkthrough directly (not the welcome blurb) — a returning
+  # visitor clicking "?" almost always wants the how-to-use-this steps, not
+  # the one-time intro.
   observeEvent(input$btn_help, {
-    start_tour()
+    start_walkthrough()
+  })
+
+  # === Feedback =============================================================
+  # ported from CalCOFI/db-viz-station's feedback modal, but posted
+  # server-side (httr::POST) rather than a client-side no-cors fetch — Shiny
+  # already has a modal primitive (showModal/modalDialog), so this reuses
+  # that instead of hand-rolling a second modal-backdrop system in raw HTML/
+  # JS/CSS on top of what bslib/Bootstrap already provides here.
+  observeEvent(input$btn_feedback, {
+    showModal(modalDialog(
+      title   = "Send feedback",
+      easyClose = TRUE,
+      textAreaInput(
+        "fb_working", "What's working well?", width = "100%",
+        placeholder = "e.g. the cruise/measurement dropdowns, the map selection"),
+      textAreaInput(
+        "fb_improve", "What needs improvement?", width = "100%",
+        placeholder = "e.g. hard to find a specific cast, download is confusing"),
+      textAreaInput(
+        "fb_broken", "Found something broken? (optional)", width = "100%",
+        placeholder = "Describe the bug or confusing behavior"),
+      textInput(
+        "fb_email", "Email (optional)", width = "100%",
+        placeholder = "name@example.com"),
+      footer = tagList(
+        modalButton("Cancel"),
+        actionButton("btn_feedback_submit", "Submit", class = "btn-primary"))))
+  })
+
+  observeEvent(input$btn_feedback_submit, {
+    updateActionButton(session, "btn_feedback_submit", label = "Sending…")
+    sent_ok <- tryCatch({
+      resp <- httr::POST(
+        url    = FEEDBACK_ENDPOINT,
+        body   = setNames(
+          list(input$fb_working, input$fb_improve, input$fb_broken, input$fb_email),
+          unlist(FEEDBACK_ENTRIES)),
+        encode = "form")
+      # a real POST (unlike the static site's client-side no-cors fetch) gets
+      # an actual status back, so failure can be detected instead of assumed
+      # sent — Google Forms returns 200 on a successful submission.
+      httr::stop_for_status(resp)
+      TRUE
+    }, error = function(e) {
+      message("feedback submit failed: ", conditionMessage(e))
+      FALSE
+    })
+
+    if (isTRUE(sent_ok)) {
+      removeModal()
+      showNotification("Thanks — your feedback was sent.", type = "message")
+    } else {
+      showNotification(
+        "Something went wrong sending that — check your connection and try again.",
+        type = "error")
+    }
   })
 }
