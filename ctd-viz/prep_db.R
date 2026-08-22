@@ -125,9 +125,8 @@ if (!db_needed && bathy_needed) {
 keep_tables <- c(
   "ctd_cast",          # cast metadata: (cruise, cast_key, cast_dir, datetime)
   "ctd_thin",          # thinned profiles, partitioned by cruise_key — app default
-  "ctd_summary",       # station/depth aggregates, partitioned
   "measurement_type",  # reference (incl. is_canonical)
-  "ship")              # reference
+  "ship")              # reference             # reference
 
 # stage parquets + duckdb in a temp cache alongside the final target,
 # then rename into place once done.
