@@ -224,6 +224,7 @@ build_transect_plotly <- function(meas_data, bathy_data = NULL,
 
   xyz <- meas_data |>
     filter(!is.na(measurement_value)) |>
+    qual_ok_rows() |>
     mutate(
       hover = paste0(
         "<b>Station ", label, "</b><br>",
@@ -428,6 +429,17 @@ build_transect_plotly <- function(meas_data, bathy_data = NULL,
     plotly::config(displayModeBar = TRUE)
 }
 
+# quality flags: the CTD cast files' own codes ride on ctd_thin.measurement_qual
+# (1/2 = use primary/secondary sensor — hints, not grades; 8 = questionable;
+# 9 = bad or missing). The table view shows them; the PLOTS should not draw them.
+# NULL-safe. Same rule as calcofi4r::cc_qual_ok_sql().
+qual_ok_rows <- function(d) {
+  if (!"measurement_qual" %in% names(d)) return(d)
+  d |> filter(is.na(measurement_qual) |
+              !(sub("\\.0+$", "", as.character(measurement_qual)) %in% c("8", "9")))
+}
+
+
 # single-cast profile plotly: value on x, depth on y (0 at top). called when
 # the selection has exactly one occupation — the transect plot needs ≥ 2
 # casts to interpolate. an optional `bathy_depth` (seafloor depth in m at the
@@ -436,6 +448,7 @@ build_profile_plotly <- function(meas_data, meas_label, max_depth,
                                  cruise_key = NULL, bathy_depth = NULL) {
   d <- meas_data |>
     filter(!is.na(measurement_value)) |>
+    qual_ok_rows() |>
     arrange(depth_m)
   if (nrow(d) < 2) return(NULL)
 
