@@ -7,8 +7,8 @@
 # re-opened from the ? icon next to the title.
 
 # wrapped in function(request) so Shiny can restore state from a bookmarked URL
+# and so the brand header can start in the theme the request asks for
 ui <- function(request) page_fillable(
-  title           = "CalCOFI CTD Explorer",
   fillable_mobile = FALSE,
   padding         = 6,
 
@@ -19,16 +19,13 @@ ui <- function(request) page_fillable(
   # the server stamp localStorage when it's been shown. tiny CSS overrides
   # tighten the top header (no form-group margin on the dropdowns) ----
   tags$head(
-    # GA4, from the one snippet shared by every CalCOFI app (calcofi4r is
-    # already attached here, so this costs nothing and cannot go stale).
+    # the calcofi.io brand contract (title, favicon, theme.css/js) plus GA4,
+    # from the one snippet shared by every CalCOFI app.
     # log_url = "" keeps the usage-log Sheet leg off — drop it to opt in.
-    calcofi4r::cc_ga_head("ctd-viz", log_url = ""),
+    calcofi4r::cc_brand_head(
+      "CalCOFI CTD Explorer", ga_app = "ctd-viz", log_url = ""),
     tags$style(HTML("
-      .ctdviz-header .shiny-input-container { margin-bottom: 0; }
-      /* swap the logo variant based on the page's bslib theme — the
-         original SVG has WHITE 'CalCOFI.io' text, hidden on light bg. */
-      [data-bs-theme='light'] .ctdviz-logo-dark  { display: none; }
-      [data-bs-theme='dark']  .ctdviz-logo-light { display: none; }
+      .cc-header .shiny-input-container { margin-bottom: 0; }
       /* conductor tour popup — default Shepherd width (~400 px) makes the
          intro paragraph tall enough to push the Next button off-screen.
          widen, cap height + scroll the body so buttons stay reachable. */
@@ -52,33 +49,23 @@ ui <- function(request) page_fillable(
       });
     "))),
 
-  # top header — logo + title + help, then Cruise + Measurement filling the
-  # remaining width (each takes an equal flex share, wraps on narrow screens)
-  div(
-    class = "ctdviz-header d-flex align-items-end gap-3 px-2 pt-1 pb-1 flex-wrap",
-    div(
-      class = "d-flex align-items-center gap-2 pb-1 text-nowrap",
-      a(href = "https://calcofi.io",
-        img(src = "logo_calcofi.svg", height = "30px",
-            class = "ctdviz-logo-dark"),
-        img(src = "logo_calcofi_light.svg", height = "30px",
-            class = "ctdviz-logo-light")),
-      span("CTD Explorer", class = "fs-5 fw-semibold"),
-      actionButton(
-        "btn_help",
-        label = bsicons::bs_icon("question-circle"),
-        class = "btn-link text-body-secondary p-0 border-0 ms-1",
-        title = "Show the tour"),
-      # sun / moon toggle — bslib swaps data-bs-theme on the page; the
-      # server observer mirrors it onto the maplibre basemap.
-      input_dark_mode(id = "dark_toggle", mode = "dark"),
-      # copy a shareable link that reopens this cruise + measurement + cast
-      # selection (url bookmarking; enabled in global.R)
-      bookmarkButton(
-        label = "Share",
-        icon  = bsicons::bs_icon("share"),
-        title = "Copy a link that reopens this cruise, measurement and cast selection",
-        class = "btn-sm btn-link text-body-secondary p-0 border-0 ms-1")),
+  # top header — the brand bar (logo -> calcofi.io, title, dark/light switch
+  # whose id `dark_toggle` the server mirrors onto the maplibre basemap), with
+  # help + Share, then Cruise + Measurement filling the remaining width
+  calcofi4r::cc_brand_header(
+    "CTD Explorer",
+    actionButton(
+      "btn_help",
+      label = bsicons::bs_icon("question-circle"),
+      class = "btn-link text-body-secondary p-0 border-0",
+      title = "Show the tour"),
+    # copy a shareable link that reopens this cruise + measurement + cast
+    # selection (url bookmarking; enabled in global.R)
+    bookmarkButton(
+      label = "Share",
+      icon  = bsicons::bs_icon("share"),
+      title = "Copy a link that reopens this cruise, measurement and cast selection",
+      class = "btn-sm btn-link text-body-secondary p-0 border-0"),
     div(
       class = "flex-grow-1",
       style = "min-width: 240px;",
@@ -92,7 +79,8 @@ ui <- function(request) page_fillable(
       selectInput(
         "sel_meas_type", "Measurement",
         choices  = meas_vec, selected = default_meas,
-        width    = "100%"))),
+        width    = "100%")),
+    mode = calcofi4r::cc_theme(request)),
 
   # top pane — resizable cruise map ----
   jqui_resizable(

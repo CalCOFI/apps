@@ -211,7 +211,9 @@ assign_occ_labels <- function(ord_occ) {
 build_transect_plotly <- function(meas_data, bathy_data = NULL,
                                   meas_label, max_depth = 500,
                                   interp_n = 100,
-                                  cruise_key = NULL) {
+                                  cruise_key = NULL, is_dark = TRUE) {
+  # brand plot colours, so text and axes read on the page's current theme
+  k <- cc_plot_colors(is_dark)
   # station labels — supplied by the caller for map/plot consistency, or
   # derived here if absent (e.g. a standalone call)
   if (!"label" %in% names(meas_data)) {
@@ -392,7 +394,7 @@ build_transect_plotly <- function(meas_data, bathy_data = NULL,
     scale_y_reverse(limits = rev(y_rng), expand = c(0, 0)) +
     scale_x_continuous(limits = x_rng, expand = expansion(mult = 0.04)) +
     labs(x = "Distance (km)", y = "Depth (m)", title = title_lab) +
-    theme_minimal(base_size = 11) +
+    cc_ggplot_theme(is_dark, base_size = 11) +
     theme(panel.grid = element_blank())
 
   # tooltip = "text" -> the point trace's hover comes from the `hover` column;
@@ -424,8 +426,9 @@ build_transect_plotly <- function(meas_data, bathy_data = NULL,
     plotly::add_annotations(
       x = station_labels$x, y = 1, xref = "x", yref = "paper",
       yanchor = "bottom", text = station_labels$label, showarrow = FALSE,
-      font = list(size = 12, color = "#222")) |>
+      font = list(size = 12, color = k$fg)) |>
     plotly::layout(dragmode = "zoom", margin = list(t = 70)) |>
+    cc_plotly_theme(is_dark) |>
     plotly::config(displayModeBar = TRUE)
 }
 
@@ -445,7 +448,9 @@ qual_ok_rows <- function(d) {
 # casts to interpolate. an optional `bathy_depth` (seafloor depth in m at the
 # cast's lon/lat) is drawn as a dashed horizontal line.
 build_profile_plotly <- function(meas_data, meas_label, max_depth,
-                                 cruise_key = NULL, bathy_depth = NULL) {
+                                 cruise_key = NULL, bathy_depth = NULL,
+                                 is_dark = TRUE) {
+  k <- cc_plot_colors(is_dark)
   d <- meas_data |>
     filter(!is.na(measurement_value)) |>
     qual_ok_rows() |>
@@ -482,13 +487,13 @@ build_profile_plotly <- function(meas_data, meas_label, max_depth,
       plotly::add_segments(
         x         = xr[1], xend = xr[2],
         y         = bathy_depth, yend = bathy_depth,
-        line      = list(color = "#666", dash = "dash", width = 1),
+        line      = list(color = k$muted, dash = "dash", width = 1),
         hoverinfo = "skip", showlegend = FALSE, inherit = FALSE) |>
       plotly::add_annotations(
         x = xr[2], y = bathy_depth, xanchor = "right", yanchor = "bottom",
         text = paste0("seafloor ≈ ", round(bathy_depth), " m"),
         showarrow = FALSE,
-        font = list(size = 10, color = "#666"))
+        font = list(size = 10, color = k$muted))
   }
 
   p |>
@@ -497,6 +502,7 @@ build_profile_plotly <- function(meas_data, meas_label, max_depth,
       xaxis  = list(title = units_lab, side = "top"),
       yaxis  = list(title = "Depth (m)", range = c(max_depth, 0)),
       margin = list(t = 80), showlegend = FALSE) |>
+    cc_plotly_theme(is_dark) |>
     plotly::config(displayModeBar = TRUE)
 }
 

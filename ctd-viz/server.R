@@ -30,6 +30,9 @@ server <- function(input, output, session) {
     sel_source  = NULL,          # "map" | "table" | "reset" | "restore"
     pending_sel = NULL)          # cast selection awaiting restore (url bookmark)
 
+  # the brand header's dark/light switch (id "dark_toggle"); the plots follow it
+  is_dark <- reactive(calcofi4r::cc_is_dark(input))
+
   # === URL bookmarking =====================================================
   # shareable links (store = "url", enabled in global.R). the cruise,
   # measurement, active tab, depth cap and bathymetry toggle are plain inputs
@@ -615,7 +618,8 @@ server <- function(input, output, session) {
         meas_label  = meas_lab,
         max_depth   = input$sl_max_depth,
         cruise_key  = rv$cruise_key,
-        bathy_depth = bathy_depth)
+        bathy_depth = bathy_depth,
+        is_dark     = is_dark())
       if (is.null(p))
         return(transect_placeholder(
           "Too few measurements to draw a profile."))
@@ -638,7 +642,8 @@ server <- function(input, output, session) {
       bathy_data = bathy,
       meas_label = meas_lab,
       max_depth  = input$sl_max_depth,
-      cruise_key = rv$cruise_key)
+      cruise_key = rv$cruise_key,
+      is_dark    = is_dark())
     if (is.null(p))
       return(transect_placeholder(
         "Too few measurements to interpolate a transect."))
@@ -654,8 +659,9 @@ server <- function(input, output, session) {
              error = function(e) message("tour failed to start: ", conditionMessage(e)))
   }
 
+  # ?tour=off (the brand contract) also suppresses it, for clean screenshots
   observeEvent(input$tour_seen, once = TRUE, ignoreNULL = TRUE, {
-    if (isTRUE(input$tour_seen)) return()
+    if (isTRUE(input$tour_seen) || !calcofi4r::cc_tour_enabled()) return()
     start_tour()
     session$sendCustomMessage("ctdviz_tour_seen", TRUE)
   })
