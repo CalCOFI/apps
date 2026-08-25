@@ -177,10 +177,10 @@ dbExecute(con, "CREATE INDEX IF NOT EXISTS idx_smp_key    ON sample(sample_key)"
 # this practical without a local copy.
 ctd_full_local <- file.path(dir_releases_local %||% "", version_used,
                             "parquet/obs_ctd_full")
-ctd_full_src <- if (nzchar(ctd_full_local) && dir.exists(ctd_full_local)) {
-  glue("'{ctd_full_local}/**/*.parquet'")
+ctd_full_sql <- if (nzchar(ctd_full_local) && dir.exists(ctd_full_local)) {
+  glue("read_parquet('{ctd_full_local}/**/*.parquet', hive_partitioning = true)")
 } else {
-  # The GCS branch CANNOT use a glob. This was written as
+  # The GCS branch CANNOT use an https glob. This was written as
   # '…/obs_ctd_full/**/*.parquet' and had never been exercised, because
   # ctd-qaqc had never been deployed to a server — a local release copy always
   # won. On the server it fails twice over: DuckDB first refuses `*` in a
@@ -188,34 +188,48 @@ ctd_full_src <- if (nzchar(ctd_full_local) && dir.exists(ctd_full_local)) {
   # with that set it then GETs the literal `**` path and takes a 404, because
   # plain HTTPS has no directory listing to expand a glob against.
   #
-  # So enumerate the partitions instead, via the GCS JSON list API — which is
-  # public for this bucket and needs no credentials — and hand DuckDB an
-  # explicit file list. Partition pruning is preserved: each path still carries
-  # its `cruise_key=…` segment, so hive_partitioning reads it exactly as it
-  # would from a glob.
-  api <- paste0("https://storage.googleapis.com/storage/v1/b/calcofi-db/o",
-                "?prefix=ducklake/releases/", version_used,
-                "/parquet/obs_ctd_full/&fields=items(name),nextPageToken")
-  objs <- character(); token <- NULL
-  repeat {
-    u <- if (is.null(token)) api else paste0(api, "&pageToken=", token)
-    j <- jsonlite::fromJSON(u)
-    objs  <- c(objs, j$items$name)
-    token <- j$nextPageToken
-    if (is.null(token)) break
+  # So hand DuckDB an explicit file list, resolved through the release catalog
+  # (calcofi4r::cc_release_sources(), the one sanctioned map from a table to its
+  # parquet). Since the v2026.09 releases each partition is a content-addressed
+  # object listed in catalog.json `objects[]`, so the list comes straight from
+  # the catalog. Partition pruning is preserved: each path still carries its
+  # `cruise_key=…` segment, so hive_partitioning reads it exactly as it would
+  # from a glob.
+  src <- cc_release_sources(cc_catalog(version_used), "obs_ctd_full")
+  objs <- if (isTRUE(src$canonical)) {
+    as.character(src$urls)
+  } else {
+    # a legacy catalog (no objects[]) resolves to an s3:// glob over the
+    # per-release path; enumerate its partitions via the GCS JSON list API —
+    # public for this bucket, no credentials — walking the prefix the resolver
+    # named rather than one built by hand
+    prefix <- sub("^s3://calcofi-db/", "",
+                  sub("/\\*\\*/\\*\\.parquet$", "/", as.character(src$urls)))
+    api <- paste0("https://storage.googleapis.com/storage/v1/b/calcofi-db/o",
+                  "?prefix=", prefix, "&fields=items(name),nextPageToken")
+    keys <- character(); token <- NULL
+    repeat {
+      u <- if (is.null(token)) api else paste0(api, "&pageToken=", token)
+      j <- jsonlite::fromJSON(u)
+      keys  <- c(keys, j$items$name)
+      token <- j$nextPageToken
+      if (is.null(token)) break
+    }
+    paste0("https://storage.googleapis.com/calcofi-db/",
+           grep("\\.parquet$", keys, value = TRUE))
   }
-  objs <- grep("\\.parquet$", objs, value = TRUE)
   stopifnot("no obs_ctd_full partitions found on GCS" = length(objs) > 0)
-  cat("  enumerated", length(objs), "obs_ctd_full partitions from GCS\n")
-  paste0("[", paste0("'https://storage.googleapis.com/calcofi-db/", objs, "'",
-                     collapse = ", "), "]")
+  cat("  resolved", length(objs), "obs_ctd_full partitions",
+      if (isTRUE(src$canonical)) "from the release catalog" else "from GCS (legacy release)",
+      "\n")
+  cc_read_parquet_sql(src, paths = objs)
 }
 dbExecute(con, "INSTALL httpfs; LOAD httpfs;")
 dbExecute(con, glue(
   "CREATE OR REPLACE VIEW obs_ctd_full AS
-   SELECT * FROM read_parquet({ctd_full_src}, hive_partitioning = true)"))
+   SELECT * FROM {ctd_full_sql}"))
 cat("obs_ctd_full: view over",
-    if (grepl("storage.googleapis.com", ctd_full_src)) "GCS" else "local release", "\n")
+    if (grepl("storage.googleapis.com", ctd_full_sql)) "GCS" else "local release", "\n")
 
 dir_create(file.path(app_dir, "data"))
 writeLines(version_used, file.path(app_dir, "data", "release_version.txt"))

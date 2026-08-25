@@ -25,9 +25,10 @@ The **Copy link** button (and the address bar) always reflect the current view.
 per sampling event across all released datasets, projected to a common schema
 (`dataset, tbl, id, cruise_key, latitude, longitude, datetime, site_key`), read
 via DuckDB `httpfs` from the frozen release **CORE**. It reads the consolidated
-`sample` event dimension
-(`gs://calcofi-db/ducklake/releases/{version}/parquet/sample.parquet`, version
-resolved from `.../releases/latest.txt`), filtered to ROOT events
+`sample` event dimension (version resolved from `.../releases/latest.txt`, the
+table's parquet resolved through the release `catalog.json` by
+`calcofi4r::cc_release_sources()` — content-addressed objects since the
+v2026.09 releases), filtered to ROOT events
 (`parent_sample_key IS NULL`) so each dataset contributes its coarse station
 grain (cast, site, tow, underway, transect …), not child bottles/nets — then
 aliases the core columns back to the app's names (`dataset_key → dataset`,
@@ -80,6 +81,6 @@ sudo ln -s /share/github/apps/db-viz-cruise /srv/shiny-server/db-viz-cruise
 
 Re-run step 2 with `TRUE` after every `release_database.qmd` run so the cross-
 dataset `obs` table reflects the latest release. The build reads the release
-`sample.parquet` (plus `cruise.parquet` / `ship.parquet`) straight from the
-version resolved in `gs://calcofi-db/ducklake/releases/latest.txt` via DuckDB
-`httpfs`.
+`sample` (plus `cruise` / `ship`) tables straight from GCS via DuckDB `httpfs`,
+at the parquet objects the release catalog names for the version resolved in
+`gs://calcofi-db/ducklake/releases/latest.txt` (needs calcofi4r >= 1.11.0).
