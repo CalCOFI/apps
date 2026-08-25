@@ -520,7 +520,7 @@ occ_depth_summary <- function(con, cruise_key) {
 # step `el` selectors target ids assigned in ui.R.
 tour <- Conductor$new(exitOnEsc = TRUE, keyboardNavigation = TRUE)$
   step(
-    title = "Welcome to CalCOFI CTD Casts",
+    title = "Welcome to CalCOFI CTD Explorer",
     text  = "Explore <b>CTD</b> (<b>C</b>onductivity, <b>T</b>emperature,
       <b>D</b>epth) casts from CalCOFI cruises (1949–present). The instrument
       is lowered through the water column on a winch, recording temperature,

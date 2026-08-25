@@ -16,7 +16,7 @@ swatch_css <- paste(
   collapse = "\n")
 
 ui <- page_fillable(
-  title           = "CalCOFI DataCheck",
+  title           = "CalCOFI Cruise Explorer",
   fillable_mobile = FALSE,
   padding         = 6,
 

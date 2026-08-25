@@ -8,7 +8,7 @@
 
 # wrapped in function(request) so Shiny can restore state from a bookmarked URL
 ui <- function(request) page_fillable(
-  title           = "CalCOFI CTD Visualization",
+  title           = "CalCOFI CTD Explorer",
   fillable_mobile = FALSE,
   padding         = 6,
 
@@ -63,7 +63,7 @@ ui <- function(request) page_fillable(
             class = "ctdviz-logo-dark"),
         img(src = "logo_calcofi_light.svg", height = "30px",
             class = "ctdviz-logo-light")),
-      span("CTD Casts", class = "fs-5 fw-semibold"),
+      span("CTD Explorer", class = "fs-5 fw-semibold"),
       actionButton(
         "btn_help",
         label = bsicons::bs_icon("question-circle"),

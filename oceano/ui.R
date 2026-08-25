@@ -1,12 +1,12 @@
 ui <- function(request) {
   dashboardPage(
-  title = "Oceano App | CalCOFI.io",
+  title = "Contour Explorer | CalCOFI.io",
   dashboardHeader(
     title = tagList(
       a(
         img(src = "./logo_calcofi.svg", height="50px"),
         href = "https://calcofi.io"),
-      "Oceano App") ),
+      "Contour Explorer") ),
   
   dashboardSidebar(
     
