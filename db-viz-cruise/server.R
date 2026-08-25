@@ -14,6 +14,9 @@ server <- function(input, output, session) {
     pending_datasets = NULL,   # dataset filter from the URL, applied once pills render
     pin              = NULL)    # pinned observation key "<dataset>:<id>"
 
+  # the brand header's dark/light switch (id "dark_toggle"); the plot follows it
+  is_dark <- reactive(calcofi4r::cc_is_dark(input))
+
   # --- parse the URL once on connect --------------------------------------
   observeEvent(session$clientData$url_search, once = TRUE, {
     q <- getQueryString(session)
@@ -231,6 +234,7 @@ server <- function(input, output, session) {
         xaxis  = list(title = "Date"),
         yaxis  = list(title = "Latitude (°N)"),
         legend = list(orientation = "h", y = -0.2)) |>
+      calcofi4r::cc_plotly_theme(is_dark()) |>
       plotly::config(displayModeBar = TRUE)
   })
 
@@ -239,8 +243,9 @@ server <- function(input, output, session) {
     tryCatch(tour$init()$start(),
              error = function(e) message("tour failed: ", conditionMessage(e)))
   }
+  # ?tour=off (the brand contract) also suppresses it, for clean screenshots
   observeEvent(input$tour_seen, once = TRUE, ignoreNULL = TRUE, {
-    if (isTRUE(input$tour_seen)) return()
+    if (isTRUE(input$tour_seen) || !calcofi4r::cc_tour_enabled()) return()
     start_tour()
     session$sendCustomMessage("cruise_tour_seen", TRUE)
   })

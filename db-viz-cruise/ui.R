@@ -15,22 +15,22 @@ swatch_css <- paste(
      background: {unname(dataset_pal)}; }}"),
   collapse = "\n")
 
-ui <- page_fillable(
-  title           = "CalCOFI Cruise Explorer",
+# a function of the request so the brand header can start in the theme the
+# request asks for (?theme= or the cc_theme cookie)
+ui <- function(request) page_fillable(
   fillable_mobile = FALSE,
   padding         = 6,
 
   useConductor(),
 
   tags$head(
-    # GA4, from the one snippet shared by every CalCOFI app (calcofi4r is
-    # already attached here, so this costs nothing and cannot go stale).
+    # the calcofi.io brand contract (title, favicon, theme.css/js) plus GA4,
+    # from the one snippet shared by every CalCOFI app.
     # log_url = "" keeps the usage-log Sheet leg off — drop it to opt in.
-    calcofi4r::cc_ga_head("db-viz-cruise", log_url = ""),
+    calcofi4r::cc_brand_head(
+      "CalCOFI Cruise Explorer", ga_app = "db-viz-cruise", log_url = ""),
     tags$style(HTML(glue::glue("
-      .dc-header .shiny-input-container {{ margin-bottom: 0; }}
-      [data-bs-theme='light'] .dc-logo-dark  {{ display: none; }}
-      [data-bs-theme='dark']  .dc-logo-light {{ display: none; }}
+      .cc-header .shiny-input-container {{ margin-bottom: 0; }}
       /* theme vars mirroring calcofi.io/db-schema (dark default + light) */
       :root, [data-bs-theme='dark'] {{
         --dc-accent: #4dabf7; --dc-border: #3a3f44; --dc-panel2: #2c3035; --dc-fg: #e6e9ed; }}
@@ -78,20 +78,15 @@ ui <- page_fillable(
       }
     "))),
 
-  # top header — logo + title + help/theme, then Cruise + dataset filter + copy
-  div(
-    class = "dc-header d-flex align-items-end gap-3 px-2 pt-1 pb-1 flex-wrap",
-    div(
-      class = "d-flex align-items-center gap-2 pb-1 text-nowrap",
-      a(href = "https://calcofi.io",
-        img(src = "logo_calcofi.svg", height = "30px", class = "dc-logo-dark"),
-        img(src = "logo_calcofi_light.svg", height = "30px", class = "dc-logo-light")),
-      span("Cruise Explorer", class = "fs-5 fw-semibold"),
-      actionButton(
-        "btn_help", label = bsicons::bs_icon("question-circle"),
-        class = "btn-link text-body-secondary p-0 border-0 ms-1",
-        title = "Show the tour"),
-      input_dark_mode(id = "dark_toggle", mode = "dark")),
+  # top header — the brand bar (logo -> calcofi.io, title, dark/light switch
+  # with id `dark_toggle` for the basemap swap), with help, then Cruise +
+  # dataset filter + copy
+  calcofi4r::cc_brand_header(
+    "Cruise Explorer",
+    actionButton(
+      "btn_help", label = bsicons::bs_icon("question-circle"),
+      class = "btn-link text-body-secondary p-0 border-0",
+      title = "Show the tour"),
     div(
       class = "flex-grow-1",
       style = "min-width: 280px;",
@@ -102,14 +97,13 @@ ui <- page_fillable(
       style = "min-width: 260px;",
       tags$label("Datasets", class = "form-label mb-1 d-block"),
       div(id = "ds_pills", uiOutput("ds_pills_ui"))),
-    div(
-      class = "pb-1",
-      tags$button(
-        id      = "btn_copy",
-        class   = "btn btn-sm btn-outline-primary",
-        onclick = "dcCopyLink(this)",
-        title   = "Copy a shareable link to this exact view",
-        bsicons::bs_icon("link-45deg"), " Copy link"))),
+    tags$button(
+      id      = "btn_copy",
+      class   = "btn btn-sm btn-outline-primary",
+      onclick = "dcCopyLink(this)",
+      title   = "Copy a shareable link to this exact view",
+      bsicons::bs_icon("link-45deg"), " Copy link"),
+    mode = calcofi4r::cc_theme(request)),
 
   # top pane — resizable map of the cruise's stations ----
   jqui_resizable(
