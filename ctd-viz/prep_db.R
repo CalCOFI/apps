@@ -212,9 +212,15 @@ dbExecute(con, "
          o.cruise_key
   FROM obs o
   WHERE o.dataset_key = 'calcofi_ctd-cast'")
-# the remote obs view is not needed once ctd_thin is local; dropping it keeps
-# the app fully offline (the view would otherwise try S3 on first touch)
-dbExecute(con, "DROP VIEW IF EXISTS obs")
+# obs is not needed once ctd_thin is local; drop it to keep the app fully
+# offline (a remote view would otherwise try S3 on first touch). It may be a
+# remote VIEW (partitioned table, the calcofi4r >= 1.12.1 default) or a local
+# TABLE (older/other layouts) — drop whichever it is rather than assume a type.
+.otype <- dbGetQuery(con,
+  "SELECT table_type FROM information_schema.tables WHERE table_name = 'obs'")$table_type
+if (length(.otype))
+  dbExecute(con, sprintf("DROP %s IF EXISTS obs",
+    if (any(grepl("VIEW", .otype, ignore.case = TRUE))) "VIEW" else "TABLE"))
 for (tbl in c("ctd_cast", "ctd_thin")) {
   n <- dbGetQuery(con, glue("SELECT COUNT(*) AS n FROM \"{tbl}\""))$n
   cat("  ", tbl, ":", format(n, big.mark = ","), "rows\n")
