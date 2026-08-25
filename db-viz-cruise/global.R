@@ -27,6 +27,10 @@ db_file <- if (dir.exists("/share/data")) {
 stopifnot(
   "prepped database not found; run `Rscript prep_db.R` first" =
     file.exists(db_file))
+# the release the database was built from (written by prep_db.R beside it)
+release_version <- tryCatch(
+  readLines(file.path(dirname(db_file), "release_version.txt"), warn = FALSE)[1],
+  error = function(e) NA_character_)
 
 # database ----
 con <- dbConnect(

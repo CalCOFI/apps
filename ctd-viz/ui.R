@@ -54,6 +54,7 @@ ui <- function(request) page_fillable(
   # help + Share, then Cruise + Measurement filling the remaining width
   calcofi4r::cc_brand_header(
     "CTD Explorer",
+    release = release_version,
     actionButton(
       "btn_help",
       label = bsicons::bs_icon("question-circle"),

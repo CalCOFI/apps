@@ -52,6 +52,9 @@ cat_rel <- tryCatch(
                            conditionMessage(e)))
 rel <- cat_rel$version
 cat("release:", rel, "\n")
+# beside the database, for the app's header chip (cc_brand_header(release=)):
+# the release the data was built from, not whatever is latest at load time
+writeLines(rel, file.path(dirname(db_file), "release_version.txt"))
 pq <- function(table) cc_read_parquet_sql(cc_release_sources(cat_rel, table))
 
 con <- dbConnect(duckdb::duckdb(dbdir = db_file))

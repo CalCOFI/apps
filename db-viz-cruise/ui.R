@@ -83,6 +83,7 @@ ui <- function(request) page_fillable(
   # dataset filter + copy
   calcofi4r::cc_brand_header(
     "Cruise Explorer",
+    release = release_version,
     actionButton(
       "btn_help", label = bsicons::bs_icon("question-circle"),
       class = "btn-link text-body-secondary p-0 border-0",

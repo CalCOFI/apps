@@ -13,7 +13,7 @@ function(request) {
     tags$head(calcofi4r::cc_brand_head("CalCOFI CTD QA/QC")),
     calcofi4r::cc_brand_header(
       "CalCOFI CTD QA/QC",
-      subtitle = glue("release {release_version}"),
+      release  = release_version,
       mode     = calcofi4r::cc_theme(request)),
 
     layout_sidebar(

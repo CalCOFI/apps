@@ -89,6 +89,7 @@ db_file <- if (dir.exists("/share/data")) {
 } else {
   path.expand("~/_big/calcofi.org/ctd-viz/ctd-viz.duckdb")
 }
+writeLines(release_used, file.path(dirname(db_file), "release_version.txt"))
 dir_create(path_dir(db_file))
 
 # bathymetry source + output (cropped after the db is on hand — see
@@ -139,6 +140,10 @@ dir_create(stage_dir)
 
 cat("fetching catalog for version:", db_version, "\n")
 info       <- cc_db_info(version = db_version)
+# the release everything below is built from, beside the database for the app's
+# header chip (calcofi4r::cc_brand_header(release=)) — "latest" resolved NOW is
+# not what an already-built database holds after the next release
+release_used <- info$version
 version_rs <- info$version
 cat("resolved version:", version_rs, "\n")
 
