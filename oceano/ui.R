@@ -68,6 +68,9 @@ ui <- function(request) {
     # already attached here, so this costs nothing and cannot go stale).
     # log_url = "" keeps the usage-log Sheet leg off — drop it to opt in.
     tags$head(calcofi4r::cc_ga_head("oceano", log_url = "")),
+    # the calcofi.io favicon set (+ theme.css/js); title = NULL keeps the
+    # dashboardPage title above as the page's one <title>
+    tags$head(calcofi4r::cc_brand_head(NULL)),
     tabsetPanel(
       id = "tabs",
       tabPanel(
