@@ -89,7 +89,6 @@ db_file <- if (dir.exists("/share/data")) {
 } else {
   path.expand("~/_big/calcofi.org/ctd-viz/ctd-viz.duckdb")
 }
-writeLines(release_used, file.path(dirname(db_file), "release_version.txt"))
 dir_create(path_dir(db_file))
 
 # bathymetry source + output (cropped after the db is on hand — see
@@ -146,6 +145,9 @@ info       <- cc_db_info(version = db_version)
 release_used <- info$version
 version_rs <- info$version
 cat("resolved version:", version_rs, "\n")
+# stamp the release beside the db (app header chip) now that it is known — it
+# was previously written at the top, before this line defined release_used
+writeLines(release_used, file.path(dirname(db_file), "release_version.txt"))
 
 avail   <- intersect(keep_tables, info$tables$name)
 missing <- setdiff(keep_tables, avail)
