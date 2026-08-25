@@ -1,11 +1,23 @@
 # ui.R — ctd-qaqc
 
 function(request) {
-  page_sidebar(
-    title = tags$span(
-      "CalCOFI CTD QA/QC",
-      tags$small(class = "text-muted ms-2", glue("release {release_version}"))),
+  # page_sidebar() spelled out (page_fillable + layout_sidebar, same arguments it
+  # passes) so the calcofi.io brand header can be the page's top bar instead of
+  # bslib's title: logo -> calcofi.io, the release, and the dark/light switch
+  # (id "dark_toggle"; the map and profile plot follow it in server.R)
+  page_fillable(
+    padding = 0, gap = 0,
+    class = "bslib-page-sidebar",
     theme = bs_theme(version = 5, preset = "shiny"),
+
+    tags$head(calcofi4r::cc_brand_head("CalCOFI CTD QA/QC")),
+    calcofi4r::cc_brand_header(
+      "CalCOFI CTD QA/QC",
+      subtitle = glue("release {release_version}"),
+      mode     = calcofi4r::cc_theme(request)),
+
+    layout_sidebar(
+    fillable = TRUE, border = FALSE, border_radius = FALSE,
 
     sidebar = sidebar(
       width = 330,
@@ -234,6 +246,6 @@ function(request) {
                 "covers \"bad\", a 9-flagged row that carries a number is bad data, ",
                 "not a contradiction. The bottle database uses a different set ",
                 "(including <code>6</code>, which has no CTD meaning)."))),
-          DTOutput("tbl_rules"))))
+          DTOutput("tbl_rules")))))
   )
 }

@@ -11,6 +11,7 @@ librarian::shelf(
   bslib, bsicons, DBI, dplyr, DT, duckdb, future, glue, htmltools,
   plotly, promises, purrr, readr, sf, shiny, stringr, tibble,
   bbest / mapgl,
+  calcofi / calcofi4r,   # the calcofi.io brand contract (cc_brand_*, cc_theme)
   quiet = T)
 
 # background execution: rules are multi-second scans, and a QA run should never

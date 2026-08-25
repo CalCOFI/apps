@@ -15,6 +15,9 @@ function(input, output, session) {
     # never confused in the UI
     up_summary = NULL, up_results = NULL)
 
+  # the brand header's dark/light switch (id "dark_toggle"); map + plot follow it
+  is_dark <- reactive(calcofi4r::cc_is_dark(input))
+
   # -- run rules in the background ---------------------------------------------
   # ExtendedTask so a multi-second scan never freezes the session. The worker CANNOT
   # inherit `con` — a DuckDB handle is not portable across processes — so it opens
@@ -340,6 +343,8 @@ function(input, output, session) {
       legend = list(orientation = "h", y = -0.06),
       hovermode = "closest",
       margin = list(t = 40)) |>
+      # text, axes and legend in the brand tokens for the page's current theme
+      calcofi4r::cc_plotly_theme(is_dark()) |>
       # registered LAST, on the fully built plot: registering on an empty plot_ly()
       # and then piping through add_trace() loses it, and the click handler then
       # silently never fires
@@ -400,7 +405,11 @@ function(input, output, session) {
     sf_d <- st_as_sf(d, coords = c("longitude", "latitude"), crs = 4326) |>
       mutate(tooltip = glue("{grid_key}\n{sample_key}"))
 
-    maplibre(style = carto_style("voyager")) |>
+    # basemap follows the dark/light switch; later flips go through the
+    # set_style observer below (isolate: a flip must not re-render the map)
+    init_style <- isolate(if (is_dark()) "dark-matter" else "voyager")
+
+    maplibre(style = carto_style(init_style)) |>
       add_navigation_control() |>
       fit_bounds(sf_d, animate = FALSE) |>
       add_circle_layer(
@@ -419,6 +428,13 @@ function(input, output, session) {
         filter = list("==", list("get", "sample_key"),
                       isolate(input$prof_cast) %||% ""))
   })
+
+  # dark / light toggle -> basemap swap, keeping the cast + pin layers
+  observeEvent(input$dark_toggle, {
+    style <- if (is_dark()) "dark-matter" else "voyager"
+    maplibre_proxy("map_cast") |>
+      set_style(carto_style(style), preserve_layers = TRUE)
+  }, ignoreInit = TRUE)
 
   # ring the selected cast without re-rendering the map
   observeEvent(list(input$prof_cast, input$prof_cruise), {
