@@ -7,7 +7,7 @@
 #
 # idempotent: skips a build when its target file already exists unless forced;
 # the database and the bathymetry raster are tracked independently.
-# downloads + materializes ctd_thin (~260 MB), ctd_summary (~5 GB), ctd_cast,
+# rebuilds ctd_thin (~13M rows) and ctd_cast from the core sample/obs release tables,
 # measurement_type, ship. the full ctd_measurement table is a *supplemental*
 # release output (not in the catalog) and is intentionally NOT materialized —
 # the app runs on the adaptively-thinned ctd_thin.
@@ -119,13 +119,16 @@ if (!db_needed && bathy_needed) {
 
 # --- from here db_needed is TRUE: full database build, then bathymetry ---
 
-# tables to include — ctd_thin is the headline CTD table (adaptively thinned;
-# single cast direction, canonical measurement types, ~10 m grid + inflections).
-# ctd_summary backs the cruise-stats panel; ctd_cast supplies cast metadata.
+# tables to include. Since the core consolidation (calcofi4db 3.0) the release
+# publishes `sample` / `obs`, not the per-dataset ctd_cast / ctd_thin /
+# ctd_summary this app was written against — those became compat VIEWs that no
+# release ships as parquet, which is why this script could not rebuild after
+# v2026.05.14 (the server served that May database until 2026-08-25). The two
+# tables the app reads are rebuilt below from the core with the legacy names,
+# columns and types; ctd_summary was never referenced by the app and is gone.
 keep_tables <- c(
-  "ctd_cast",          # cast metadata: (cruise, cast_key, cast_dir, datetime)
-  "ctd_thin",          # thinned profiles, partitioned by cruise_key — app default
-  "ctd_summary",       # station/depth aggregates, partitioned
+  "sample",            # core events: the CTD casts (sample_type = 'cast')
+  "obs",               # core observations: ctd_thin lives here (dataset_key = 'calcofi_ctd-cast')
   "measurement_type",  # reference (incl. is_canonical)
   "ship")              # reference
 
@@ -139,16 +142,14 @@ info       <- cc_db_info(version = db_version)
 version_rs <- info$version
 cat("resolved version:", version_rs, "\n")
 
-# only request tables actually present in this release (defensive against
-# older releases that predate ctd_thin)
 avail   <- intersect(keep_tables, info$tables$name)
 missing <- setdiff(keep_tables, avail)
 if (length(missing) > 0)
   cat("WARNING: not in release ", version_rs, ": ",
       paste(missing, collapse = ", "), "\n", sep = "")
 stopifnot(
-  "release lacks ctd_thin — rebuild with v2026.05.14 or later" =
-    "ctd_thin" %in% avail)
+  "release lacks the core sample/obs tables — rebuild with v2026.07.15 or later" =
+    all(c("sample", "obs") %in% avail))
 
 # cc_get_db names the output `calcofi_{version}.duckdb` in cache_dir
 staged_db <- file.path(stage_dir, glue("calcofi_{version_rs}.duckdb"))
@@ -167,19 +168,45 @@ is_server <- Sys.info()[["sysname"]] == "Linux"
 # Limit DuckDB threads so it doesn't starve the Shiny server
 if (is_server) res <- dbExecute(con, "SET threads TO 2")
 
-# materialize partitioned views → native local tables ----
-# cc_get_db leaves partitioned tables (ctd_thin, ctd_summary) as remote S3
-# views; materialize them so the app runs fully offline.
-part_tbls <- info$tables$name[
-  info$tables$name %in% avail & info$tables$partitioned]
-
-for (tbl in part_tbls) {
-  cat("materializing partitioned table:", tbl, "\n")
-  tmp_name <- paste0(tbl, "_local")
-  dbExecute(con, glue(
-    "CREATE OR REPLACE TABLE \"{tmp_name}\" AS SELECT * FROM \"{tbl}\""))
-  dbExecute(con, glue("DROP VIEW IF EXISTS \"{tbl}\""))
-  dbExecute(con, glue("ALTER TABLE \"{tmp_name}\" RENAME TO \"{tbl}\""))
+# rebuild the legacy app tables from the core ----
+# `obs` is Hive-partitioned by dataset_key, so cc_get_db leaves it as a remote
+# view; the WHERE below prunes to the one CTD partition (~13M rows) rather than
+# pulling all 16 datasets. Column names and TYPES match what the app was built
+# against (ord_occ/line/sta are zero-padded VARCHAR, ctd_cast_uuid is the join
+# key between the two tables — the namespaced sample_key serves exactly that).
+cat("building ctd_cast from sample...\n")
+dbExecute(con, "
+  CREATE OR REPLACE TABLE ctd_cast AS
+  SELECT s.sample_key                                     AS ctd_cast_uuid,
+         s.data_stage,
+         split_part(s.sample_key, ':', 3)                 AS cast_key,
+         upper(right(split_part(s.sample_key, ':', 3), 1)) AS cast_dir,
+         lpad(CAST(s.order_occ AS VARCHAR), 3, '0')       AS ord_occ,
+         s.datetime                                       AS datetime_utc,
+         s.datetime                                       AS datetime_start_utc,
+         s.latitude, s.longitude,
+         s.latitude                                       AS lat_dec,
+         s.longitude                                      AS lon_dec,
+         s.site_key,
+         split_part(s.site_key, ' ', 1)                   AS line,
+         split_part(s.site_key, ' ', 2)                   AS sta,
+         s.cruise_key, s.grid_key, s.seafloor_depth_m
+  FROM sample s
+  WHERE s.dataset_key = 'calcofi_ctd-cast' AND s.sample_type = 'cast'")
+cat("building ctd_thin from obs (CTD partition only)...\n")
+dbExecute(con, "
+  CREATE OR REPLACE TABLE ctd_thin AS
+  SELECT CAST(o.obs_id AS VARCHAR)  AS ctd_thin_uuid,
+         o.sample_key               AS ctd_cast_uuid,
+         o.depth_min_m              AS depth_m,
+         o.measurement_type, o.measurement_value, o.measurement_qual,
+         o.cruise_key
+  FROM obs o
+  WHERE o.dataset_key = 'calcofi_ctd-cast'")
+# the remote obs view is not needed once ctd_thin is local; dropping it keeps
+# the app fully offline (the view would otherwise try S3 on first touch)
+dbExecute(con, "DROP VIEW IF EXISTS obs")
+for (tbl in c("ctd_cast", "ctd_thin")) {
   n <- dbGetQuery(con, glue("SELECT COUNT(*) AS n FROM \"{tbl}\""))$n
   cat("  ", tbl, ":", format(n, big.mark = ","), "rows\n")
 }
@@ -230,7 +257,6 @@ dbExecute(con, "CREATE INDEX IF NOT EXISTS idx_ctdcast_uuid   ON ctd_cast(ctd_ca
 dbExecute(con, "CREATE INDEX IF NOT EXISTS idx_ctdcast_cruise ON ctd_cast(cruise_key)")
 dbExecute(con, "CREATE INDEX IF NOT EXISTS idx_ctdthin_uuid   ON ctd_thin(ctd_cast_uuid)")
 dbExecute(con, "CREATE INDEX IF NOT EXISTS idx_ctdthin_cruise ON ctd_thin(cruise_key)")
-dbExecute(con, "CREATE INDEX IF NOT EXISTS idx_ctdsumm_cruise ON ctd_summary(cruise_key)")
 
 # compact and close ----
 cat("analyzing + checkpointing...\n")
