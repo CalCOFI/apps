@@ -1,4 +1,4 @@
-# datacheck server — pick a cruise, see every dataset's stations for it on a
+# cruise-explorer server — pick a cruise, see every dataset's stations for it on a
 # map + table + space-time plot, all colored by dataset. The whole view state
 # (cruise, dataset filter, pinned observation) round-trips through the URL query
 # string so any view is shareable — the feature ctd-viz lacks.
@@ -192,7 +192,7 @@ server <- function(input, output, session) {
     downloadButton("dl_data", "Download CSV", class = "btn-sm btn-link p-0")
   })
   output$dl_data <- downloadHandler(
-    filename = function() glue("datacheck_{input$sel_cruise}.csv"),
+    filename = function() glue("cruise_{input$sel_cruise}.csv"),
     content  = function(file) {
       obs_filt() |>
         select(dataset, tbl, id, cruise_key, site_key, datetime,
@@ -242,7 +242,7 @@ server <- function(input, output, session) {
   observeEvent(input$tour_seen, once = TRUE, ignoreNULL = TRUE, {
     if (isTRUE(input$tour_seen)) return()
     start_tour()
-    session$sendCustomMessage("datacheck_tour_seen", TRUE)
+    session$sendCustomMessage("cruise_tour_seen", TRUE)
   })
   observeEvent(input$btn_help, start_tour())
 }

@@ -1,4 +1,4 @@
-# datacheck UI — a top bar (Cruise + dataset filter + copy-link), a resizable
+# cruise-explorer UI — a top bar (Cruise + dataset filter + copy-link), a resizable
 # map of every dataset's stations for the cruise (colored by dataset), and
 # Table / Plot tabs below. The dataset filter pills double as the color legend.
 # State (cruise, dataset filter, pinned observation) round-trips through the URL
@@ -59,11 +59,14 @@ ui <- page_fillable(
     tags$script(HTML("
       $(document).on('shiny:connected', function() {
         var seen = false;
-        try { seen = localStorage.getItem('datacheck_tour_seen') === 'true'; } catch(e) {}
+        // renamed from datacheck_tour_seen (2026-08-25); keep reading the
+        // old key so returning visitors are not re-toured by the rename
+        try { seen = localStorage.getItem('cruise_tour_seen') === 'true'
+                  || localStorage.getItem('datacheck_tour_seen') === 'true'; } catch(e) {}
         Shiny.setInputValue('tour_seen', seen, {priority: 'event'});
       });
-      Shiny.addCustomMessageHandler('datacheck_tour_seen', function(v) {
-        try { localStorage.setItem('datacheck_tour_seen', 'true'); } catch(e) {}
+      Shiny.addCustomMessageHandler('cruise_tour_seen', function(v) {
+        try { localStorage.setItem('cruise_tour_seen', 'true'); } catch(e) {}
       });
       // copy the current address-bar URL (kept in sync via updateQueryString)
       function dcCopyLink(btn) {
@@ -83,7 +86,7 @@ ui <- page_fillable(
       a(href = "https://calcofi.io",
         img(src = "logo_calcofi.svg", height = "30px", class = "dc-logo-dark"),
         img(src = "logo_calcofi_light.svg", height = "30px", class = "dc-logo-light")),
-      span("DataCheck", class = "fs-5 fw-semibold"),
+      span("Cruise Explorer", class = "fs-5 fw-semibold"),
       actionButton(
         "btn_help", label = bsicons::bs_icon("question-circle"),
         class = "btn-link text-body-secondary p-0 border-0 ms-1",
