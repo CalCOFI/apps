@@ -190,8 +190,10 @@ dbExecute(con, "
          s.site_key,
          split_part(s.site_key, ' ', 1)                   AS line,
          split_part(s.site_key, ' ', 2)                   AS sta,
-         s.cruise_key, s.grid_key, s.seafloor_depth_m
+         s.cruise_key, s.grid_key, s.seafloor_depth_m,
+         sh.ship_key                                      -- global.R joins ship on it
   FROM sample s
+  LEFT JOIN ship sh ON sh.ship_nodc = substr(s.cruise_key, 9)
   WHERE s.dataset_key = 'calcofi_ctd-cast' AND s.sample_type = 'cast'")
 cat("building ctd_thin from obs (CTD partition only)...\n")
 dbExecute(con, "
