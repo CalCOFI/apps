@@ -113,17 +113,24 @@ server <- function(input, output, session) {
         tooltip             = "tooltip") |>
       add_circle_layer(            # pinned observation — drawn on top, ringed
         id = "pin", source = sf,
+        # matches nothing until a pin is set: opacity 0 hid the fill but not the
+        # stroke, so every observation drew a 2.5 px ring and the tracks read as
+        # solid bands (invisible on dark-matter, black on voyager)
+        filter              = list("==", list("get", "obs_key"), ""),
         circle_color        = get_column("color"),
         circle_radius       = 9,
-        circle_opacity      = 0,
-        circle_stroke_color = "#111111",
+        circle_opacity      = 1,
+        circle_stroke_color = if (init_style == "dark-matter") "#ffffff" else "#111111",
         circle_stroke_width = 2.5)
   })
 
   # dark / light basemap swap (preserve the layers we added)
   observeEvent(input$dark_toggle, {
-    style <- if (identical(input$dark_toggle, "dark")) "dark-matter" else "voyager"
-    maplibre_proxy("map_obs") |> set_style(carto_style(style))
+    dark  <- identical(input$dark_toggle, "dark")
+    style <- if (dark) "dark-matter" else "voyager"
+    maplibre_proxy("map_obs") |>
+      set_style(carto_style(style)) |>
+      set_paint_property("pin", "circle-stroke-color", if (dark) "#ffffff" else "#111111")
   }, ignoreInit = TRUE)
 
   # map click -> pin that observation (+ URL gains &id=)
@@ -136,13 +143,7 @@ server <- function(input, output, session) {
   # store -> map: light up the pinned observation via the proxy (no re-render)
   observeEvent(list(rv$pin, obs_filt()), {
     proxy <- maplibre_proxy("map_obs")
-    if (is.null(rv$pin)) {
-      proxy |> set_paint_property("pin", "circle-opacity", 0)
-    } else {
-      proxy |>
-        set_filter("pin", list("==", list("get", "obs_key"), rv$pin)) |>
-        set_paint_property("pin", "circle-opacity", 1)
-    }
+    proxy |> set_filter("pin", list("==", list("get", "obs_key"), rv$pin %||% ""))
   }, ignoreInit = TRUE)
 
   # --- table --------------------------------------------------------------
